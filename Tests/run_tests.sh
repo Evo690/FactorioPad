@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+project_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+test_dir="$(mktemp -d /tmp/factoriopad-tests.XXXXXX)"
+trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
+cd "$project_dir"
+
+xcrun clang++ -fobjc-arc -fblocks -IFactorioCompat -framework Foundation -framework CoreGraphics \
+    Tests/test_config.mm -o "$test_dir/config"
+"$test_dir/config"
+xcrun swiftc FactorioPad/FactorioOnScreenKeyboard.swift Tests/test_keyboard.swift -o "$test_dir/keyboard"
+"$test_dir/keyboard"
+xcrun clang -fobjc-arc -fblocks -framework Foundation Tests/test_keyboard_bridge.m -o "$test_dir/keyboard-bridge"
+"$test_dir/keyboard-bridge"
+xcrun clang -fobjc-arc -fblocks -framework Foundation -framework GameController -framework QuartzCore -framework CoreGraphics \
+    Tests/test_controller.m -o "$test_dir/controller"
+"$test_dir/controller"
+xcrun clang -fobjc-arc -fblocks -Wl,-export_dynamic -framework Foundation -framework GameController -framework QuartzCore -framework CoreGraphics \
+    Tests/test_input.m -o "$test_dir/input"
+"$test_dir/input"
+xcrun swiftc FactorioPad/FactorioControlsView.swift Tests/test_controls.swift -o "$test_dir/controls"
+"$test_dir/controls"
+python3 Tests/test_prepare_guest.py

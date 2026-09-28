@@ -1,0 +1,30 @@
+@main
+struct KeyboardTest {
+    static func main() {
+        var layout = FactorioKeyboardLayout()
+        let allPages = (FactorioKeyboardLayout.letterRows.joined() + FactorioKeyboardLayout.letterRows.joined().uppercased()
+            + FactorioKeyboardLayout.numberRows.joined() + FactorioKeyboardLayout.symbolRows.joined() + " ")
+        let available = Set(allPages.unicodeScalars.map(\.value))
+        assert(Set(UInt32(32)...UInt32(126)).isSubset(of: available))
+        assert(layout.rows == ["qwertyuiop", "asdfghjkl", "zxcvbnm"])
+        layout.tapShift(at: 1)
+        assert(layout.rows[0] == "QWERTYUIOP")
+        assert(layout.insert("a") == "A" && layout.shift == .off)
+        assert(layout.insert("b") == "b")
+        layout.tapShift(at: 2)
+        layout.tapShift(at: 2.2)
+        assert(layout.shift == .locked)
+        assert(layout.insert("a") == "A" && layout.insert("b") == "B")
+        layout.tapShift(at: 3)
+        assert(layout.shift == .off)
+        layout.show(.numbers)
+        assert(layout.rows[0] == "1234567890" && layout.insert("1") == "1")
+        layout.show(.symbols)
+        assert(layout.rows[0] == "[]{}#%^*+=" && layout.insert("@") == "@")
+        assert(layout.insert(" ") == " " && layout.page == .letters)
+        layout.toggleCapsLock()
+        layout.reset()
+        assert(layout.page == .letters && layout.shift == .off)
+        print("Factorio keyboard layout tests passed.")
+    }
+}

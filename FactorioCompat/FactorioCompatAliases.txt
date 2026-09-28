@@ -1,0 +1,2 @@
+_OBJC_CLASS_$_FactorioNSColor _OBJC_CLASS_$_NSColor
+_OBJC_METACLASS_$_FactorioNSColor _OBJC_METACLASS_$_NSColor

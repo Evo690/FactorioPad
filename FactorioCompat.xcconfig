@@ -1,0 +1,12 @@
+// These exports satisfy the guest binary's rewritten macOS dependencies.
+OTHER_LDFLAGS = $(inherited) \
+    -Wl,-reexport_framework,Foundation \
+    -Wl,-reexport_framework,CoreGraphics \
+    -Wl,-reexport_framework,CoreVideo \
+    -Wl,-reexport_framework,Metal \
+    -Wl,-reexport_framework,CoreServices \
+    -Wl,-reexport_framework,IOKit \
+    -Wl,-reexport_framework,Security \
+    -Wl,-alias_list,$(SRCROOT)/FactorioCompat/FactorioCompatAliases.txt \
+    -Wl,-reexport_framework,CoreAudio \
+    -Wl,-reexport_framework,AudioToolbox

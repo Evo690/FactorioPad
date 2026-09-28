@@ -1,0 +1,13 @@
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+__pycache__/
+player-data.json
+factorio-account.json
+/cacert.pem
+/FactorioPad/Assets.xcassets/AppIcon.appiconset/icon.png
+Vendor/
+dist/
+*.ipa
+*.xcarchive
