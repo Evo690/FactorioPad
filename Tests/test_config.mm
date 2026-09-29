@@ -19,6 +19,19 @@ int main(void)
         NSCAssert([defaults containsString:@"active-quick-bars=1\n"], @"new installations must show only one quickbar row");
         NSCAssert(![defaults containsString:@"quick-bar-button-1-secondary="],
             @"RB + D-pad must no longer configure second-row quickbar shortcuts");
+        NSCAssert(![defaults containsString:@"[controls]\n"],
+            @"new installations must keep Factorio's default key bindings");
+        NSString *oldControllerConfig = [defaults stringByAppendingFormat:@"\n[controls]\n%@\ncopy=ALT + C\n",
+            [FactorioControllerBindings() componentsJoinedByString:@"\n"]];
+        NSString *upgrade = FactorioApplyControlSection(oldControllerConfig, @"[controls]",
+            FactorioControllerBindings(), NO);
+        for (NSString *binding in FactorioControllerBindings()) {
+            NSCAssert(![upgrade containsString:binding],
+                @"upgrading must remove every old FactorioPad shortcut");
+        }
+        NSCAssert([upgrade containsString:@"heading-vehicle-driving=true"] &&
+            [upgrade containsString:@"copy=ALT + C"],
+            @"upgrading must retain driving support and custom key bindings");
         NSCAssert([FactorioUpdateConfigPaths(defaults, @"/new/read", @"/new/write") isEqualToString:defaults],
             @"later launches must preserve the default interface scale");
         NSString *customScale = @"[interface]\nui-scale-mode=manual-display-points\ncustom-ui-scale=1.25\ncustom-proportional-ui-scale=1.25\n";

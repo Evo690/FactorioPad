@@ -9,15 +9,23 @@
 
 enum {
     FP_SC_A = 4,
+    FP_SC_B = 5,
     FP_SC_C = 6,
     FP_SC_D = 7,
     FP_SC_E = 8,
+    FP_SC_F = 9,
     FP_SC_M = 16,
+    FP_SC_P = 19,
     FP_SC_Q = 20,
     FP_SC_R = 21,
     FP_SC_S = 22,
+    FP_SC_T = 23,
     FP_SC_U = 24,
+    FP_SC_V = 25,
     FP_SC_W = 26,
+    FP_SC_X = 27,
+    FP_SC_Y = 28,
+    FP_SC_Z = 29,
 
     FP_SC_1 = 30,
     FP_SC_2 = 31,
@@ -25,10 +33,12 @@ enum {
     FP_SC_4 = 33,
 
     FP_SC_ESCAPE = 41,
+    FP_SC_RETURN = 40,
     FP_SC_SPACE = 44,
 
     FP_SC_LCTRL = 224,
     FP_SC_LSHIFT = 225,
+    FP_SC_LALT = 226,
     FP_SC_LGUI = 227
 };
 
@@ -73,7 +83,41 @@ static BOOL gD = NO;
 
 static BOOL gShift = NO;
 static BOOL gCtrl = NO;
+static uint16_t gEmittedModifiers = 0;
 static BOOL gRightMousePressed = NO;
+
+typedef struct {
+    int scancode;
+    int keycode;
+    uint16_t modifiers;
+    BOOL hold;
+} FPShortcut;
+
+typedef struct {
+    BOOL pressed;
+    FPShortcut shortcut;
+    unsigned long sequence;
+} FPActionState;
+
+enum { FP_ACTION_A, FP_ACTION_B, FP_ACTION_X, FP_ACTION_Y, FP_ACTION_VIEW, FP_ACTION_COUNT };
+static FPActionState gActions[FP_ACTION_COUNT];
+static unsigned long gActionSequence = 0;
+
+#define FP_SHORTCUT(sc, key, mod, held) {sc, key, mod, held}
+static const FPShortcut gActionShortcuts[FP_ACTION_COUNT][4] = {
+    {FP_SHORTCUT(FP_SC_E, 'e', 0, NO), FP_SHORTCUT(FP_SC_F, 'f', 0, YES),
+     FP_SHORTCUT(FP_SC_RETURN, '\r', 0, NO), FP_SHORTCUT(FP_SC_RETURN, '\r', 0, NO)},
+    {FP_SHORTCUT(FP_SC_Q, 'q', 0, NO), FP_SHORTCUT(FP_SC_Z, 'z', 0, NO),
+     FP_SHORTCUT(FP_SC_C, 'c', FP_MOD_LCTRL, NO), FP_SHORTCUT(FP_SC_X, 'x', FP_MOD_LCTRL, NO)},
+    {FP_SHORTCUT(FP_SC_R, 'r', 0, NO), FP_SHORTCUT(FP_SC_R, 'r', FP_MOD_LSHIFT, NO),
+     FP_SHORTCUT(FP_SC_V, 'v', FP_MOD_LCTRL, NO), FP_SHORTCUT(FP_SC_Z, 'z', FP_MOD_LCTRL, NO)},
+    {FP_SHORTCUT(FP_SC_SPACE, ' ', 0, YES), FP_SHORTCUT(FP_SC_SPACE, ' ', FP_MOD_LSHIFT, YES),
+     FP_SHORTCUT(FP_SC_LALT, 0x40000000 | FP_SC_LALT, 0, NO),
+     FP_SHORTCUT(FP_SC_Y, 'y', FP_MOD_LCTRL, NO)},
+    {FP_SHORTCUT(FP_SC_M, 'm', 0, NO), FP_SHORTCUT(FP_SC_T, 't', 0, NO),
+     FP_SHORTCUT(FP_SC_P, 'p', 0, NO), FP_SHORTCUT(FP_SC_B, 'b', 0, NO)}
+};
+#undef FP_SHORTCUT
 
 static const void *gControllerQueueKey =
     &gControllerQueueKey;
@@ -96,11 +140,34 @@ FPCurrentModifiers(void)
 
 
 static void
+FPSetEmittedModifiers(uint16_t modifiers)
+{
+    const int scancodes[] = {FP_SC_LSHIFT, FP_SC_LCTRL, FP_SC_LALT};
+    const uint16_t bits[] = {FP_MOD_LSHIFT, FP_MOD_LCTRL, FP_MOD_LALT};
+    FactorioKeyboardSetModifierState(modifiers);
+    for (NSUInteger index = 0; index < 3; index++) {
+        if ((gEmittedModifiers & bits[index]) && !(modifiers & bits[index])) {
+            FactorioKeyboardKeyUp(scancodes[index], 0x40000000 | scancodes[index]);
+        }
+    }
+    for (NSUInteger index = 0; index < 3; index++) {
+        if (!(gEmittedModifiers & bits[index]) && (modifiers & bits[index])) {
+            FactorioKeyboardKeyDown(scancodes[index], 0x40000000 | scancodes[index]);
+        }
+    }
+    gEmittedModifiers = modifiers;
+}
+
+static void
 FPRefreshModifiers(void)
 {
-    FactorioKeyboardSetModifierState(
-        FPCurrentModifiers()
-    );
+    FPActionState *latest = NULL;
+    for (NSUInteger index = 0; index < FP_ACTION_COUNT; index++) {
+        FPActionState *action = &gActions[index];
+        if (action->pressed && action->shortcut.hold &&
+            (!latest || action->sequence > latest->sequence)) latest = action;
+    }
+    FPSetEmittedModifiers(latest ? latest->shortcut.modifiers : FPCurrentModifiers());
 }
 
 
@@ -166,6 +233,36 @@ FPTapShortcutKey(int scancode, int keycode)
 }
 
 static void
+FPBindActionButton(GCControllerButtonInput *button, NSUInteger index)
+{
+    button.pressedChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
+        if (!gActive) return;
+        FactorioInputPerform(^{
+            FPActionState *action = &gActions[index];
+            if (action->pressed == pressed) return;
+            if (pressed) {
+                action->shortcut = gActionShortcuts[index][(gCtrl ? 2 : 0) | (gShift ? 1 : 0)];
+                action->pressed = YES;
+                action->sequence = ++gActionSequence;
+                if (action->shortcut.hold) {
+                    FPRefreshModifiers();
+                    FPTapKeyState(YES, action->shortcut.scancode, action->shortcut.keycode);
+                } else {
+                    FPSetEmittedModifiers(action->shortcut.modifiers);
+                    FPTapShortcutKey(action->shortcut.scancode, action->shortcut.keycode);
+                    FPRefreshModifiers();
+                }
+            } else {
+                if (action->shortcut.hold)
+                    FPTapKeyState(NO, action->shortcut.scancode, action->shortcut.keycode);
+                action->pressed = NO;
+                FPRefreshModifiers();
+            }
+        });
+    };
+}
+
+static void
 FPBindDPad(
     GCControllerButtonInput *button,
     int numberScancode,
@@ -178,10 +275,10 @@ FPBindDPad(
         if (!gActive) return;
         if (pressed && gCtrl) {
             FactorioInputPerform(^{
-                // RB selects a native shortcut, not a Ctrl-modified quickbar slot.
-                FactorioKeyboardSetModifierState(shortcutModifiers);
+                uint16_t restore = gEmittedModifiers;
+                FPSetEmittedModifiers(shortcutModifiers);
                 shortcut();
-                FPRefreshModifiers();
+                FPSetEmittedModifiers(restore);
             });
         } else {
             // Always release the number, even if RB changed while it was held.
@@ -227,27 +324,9 @@ FPReleaseMovement(void)
 static void
 FPReleaseModifiers(void)
 {
-    if (gShift) {
-
-        FactorioKeyboardKeyUp(
-            FP_SC_LSHIFT,
-            0x40000000 | FP_SC_LSHIFT
-        );
-
-        gShift = NO;
-    }
-
-    if (gCtrl) {
-
-        FactorioKeyboardKeyUp(
-            FP_SC_LCTRL,
-            0x40000000 | FP_SC_LCTRL
-        );
-
-        gCtrl = NO;
-    }
-
-    FPRefreshModifiers();
+    gShift = NO;
+    gCtrl = NO;
+    FPSetEmittedModifiers(0);
 }
 
 
@@ -256,12 +335,17 @@ FPReleaseEverything(void)
 {
     FactorioInputPerform(^{
         FPReleaseMovement();
+        for (NSUInteger index = 0; index < FP_ACTION_COUNT; index++) {
+            FPActionState *action = &gActions[index];
+            if (action->pressed && action->shortcut.hold)
+                FPTapKeyState(NO, action->shortcut.scancode, action->shortcut.keycode);
+            action->pressed = NO;
+        }
         FPReleaseModifiers();
 
         // Release actions too: a disconnected pad cannot send their key-up events.
-        const int scancodes[] = {FP_SC_E, FP_SC_Q, FP_SC_R, FP_SC_SPACE,
-            FP_SC_1, FP_SC_2, FP_SC_3, FP_SC_4, FP_SC_M, FP_SC_ESCAPE};
-        const int keycodes[] = {'e', 'q', 'r', ' ', '1', '2', '3', '4', 'm', 27};
+        const int scancodes[] = {FP_SC_1, FP_SC_2, FP_SC_3, FP_SC_4, FP_SC_ESCAPE};
+        const int keycodes[] = {'1', '2', '3', '4', 27};
         for (NSUInteger index = 0; index < sizeof(scancodes) / sizeof(scancodes[0]); index++) {
             FactorioKeyboardKeyUp(scancodes[index], keycodes[index]);
         }
@@ -582,26 +666,8 @@ FPInstallController(
         }
 
         FactorioInputPerform(^{
-            if (pressed) {
-
-                gShift = YES;
-                FPRefreshModifiers();
-
-                FactorioKeyboardKeyDown(
-                    FP_SC_LSHIFT,
-                    0x40000000 | FP_SC_LSHIFT
-                );
-
-            } else {
-
-                FactorioKeyboardKeyUp(
-                    FP_SC_LSHIFT,
-                    0x40000000 | FP_SC_LSHIFT
-                );
-
-                gShift = NO;
-                FPRefreshModifiers();
-            }
+            gShift = pressed;
+            FPRefreshModifiers();
         });
     };
 
@@ -626,26 +692,8 @@ FPInstallController(
         }
 
         FactorioInputPerform(^{
-            if (pressed) {
-
-                gCtrl = YES;
-                FPRefreshModifiers();
-
-                FactorioKeyboardKeyDown(
-                    FP_SC_LCTRL,
-                    0x40000000 | FP_SC_LCTRL
-                );
-
-            } else {
-
-                FactorioKeyboardKeyUp(
-                    FP_SC_LCTRL,
-                    0x40000000 | FP_SC_LCTRL
-                );
-
-                gCtrl = NO;
-                FPRefreshModifiers();
-            }
+            gCtrl = pressed;
+            FPRefreshModifiers();
         });
     };
 
@@ -665,33 +713,10 @@ FPInstallController(
     }
 
 
-    // A -> E
-    FP_BIND_BUTTON(
-        pad.buttonA,
-        FP_SC_E,
-        'e'
-    );
-
-    // B -> Q
-    FP_BIND_BUTTON(
-        pad.buttonB,
-        FP_SC_Q,
-        'q'
-    );
-
-    // X -> R
-    FP_BIND_BUTTON(
-        pad.buttonX,
-        FP_SC_R,
-        'r'
-    );
-
-    // Y -> Space
-    FP_BIND_BUTTON(
-        pad.buttonY,
-        FP_SC_SPACE,
-        ' '
-    );
+    FPBindActionButton(pad.buttonA, FP_ACTION_A);
+    FPBindActionButton(pad.buttonB, FP_ACTION_B);
+    FPBindActionButton(pad.buttonX, FP_ACTION_X);
+    FPBindActionButton(pad.buttonY, FP_ACTION_Y);
 
 
     // ---------------------------------------------------------
@@ -704,19 +729,12 @@ FPInstallController(
         '1', FP_MOD_LGUI, ^{
             // ponytail: ignore filter while LT is held; restore its click if simultaneous input is needed.
             if (gRightMousePressed) return;
-            // Queue modifier key events too: mouse events carry no modifier flags.
-            FactorioKeyboardSetModifierState(0);
-            FPTapKeyState(NO, FP_SC_LCTRL, 0x40000000 | FP_SC_LCTRL);
-            if (gShift) FPTapKeyState(NO, FP_SC_LSHIFT, 0x40000000 | FP_SC_LSHIFT);
+            // Command uses a separate modifier key from the shoulder shortcuts.
             FactorioKeyboardSetModifierState(FP_MOD_LGUI);
             FPTapKeyState(YES, FP_SC_LGUI, 0x40000000 | FP_SC_LGUI);
             FactorioMouseButton(FP_MOUSE_RIGHT, YES, (int32_t)llround(gCursorX), (int32_t)llround(gCursorY));
             FactorioMouseButton(FP_MOUSE_RIGHT, NO, (int32_t)llround(gCursorX), (int32_t)llround(gCursorY));
-            FactorioKeyboardSetModifierState(0);
             FPTapKeyState(NO, FP_SC_LGUI, 0x40000000 | FP_SC_LGUI);
-            FPRefreshModifiers();
-            if (gShift) FPTapKeyState(YES, FP_SC_LSHIFT, 0x40000000 | FP_SC_LSHIFT);
-            FPTapKeyState(YES, FP_SC_LCTRL, 0x40000000 | FP_SC_LCTRL);
         }
     );
 
@@ -744,12 +762,7 @@ FPInstallController(
     // ---------------------------------------------------------
 
     if (pad.buttonOptions) {
-
-        FP_BIND_BUTTON(
-            pad.buttonOptions,
-            FP_SC_M,
-            'm'
-        );
+        FPBindActionButton(pad.buttonOptions, FP_ACTION_VIEW);
     }
 
     if (pad.buttonMenu) {

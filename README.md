@@ -1,26 +1,34 @@
 # FactorioPad
 
-Play Factorio on iPhone and iPad with a gamepad.
+Play Factorio on iPhone and iPad with a gamepad or a physical keyboard and mouse.
 
 > [!IMPORTANT]
 > FactorioPad does not include the game. Download the Mac version from [factorio.com](https://factorio.com/download), not Steam.
+> Install `factorio.app` in `/Applications` on your Mac before you build the IPA.
 
 ## What you need
 
 - A Mac with Xcode 27.
 - An iPhone or iPad with iOS 27 or iPadOS 27.
-- A gamepad.
+- A gamepad, or a physical keyboard and mouse.
 - `factorio.app` in `/Applications` on the Mac.
 
-FactorioPad was tested with Factorio 2.0.77 on an iPad mini (7th generation) and an iPhone 15 Pro. Other game versions are untested.
+FactorioPad was tested with Factorio 2.0.77 and a gamepad on an iPad mini (7th generation) and an iPhone 15 Pro. Other game versions are untested.
 
 ## What changes on iPhone and iPad
 
 - A gamepad acts as a mouse and keyboard. The right stick moves the mouse pointer.
+- A physical keyboard uses the game's keyboard controls. A mouse supports movement, clicks, dragging, and scrolling.
 - Touch supports menu taps and drags, but not touch-only gameplay.
-- New installations change Factorio key bindings for gamepad controls.
+- Gamepad buttons send Factorio's default keyboard shortcuts. Some keys, including Tab, are not mapped to the gamepad.
+- New freeplay games skip the opening cutscene and tutorial prompt, so a gamepad does not need Tab to start playing.
 - New installations use a 150% interface scale and one visible quickbar.
-- The on-screen keyboard lets you type names and passwords. Hold the keyboard button to see the gamepad controls.
+- A button opens the on-screen keyboard when a gamepad is connected or no physical keyboard is connected. Hold it to see the gamepad controls.
+- Full-screen play locks a connected mouse pointer to keep it inside the game.
+
+## Use a keyboard and mouse
+
+Connect a physical keyboard and mouse to your iPhone or iPad. FactorioPad detects them automatically, and the keyboard uses your existing Factorio key bindings. The mouse moves the pointer and supports clicks, dragging, and scrolling. You can also keep a gamepad connected.
 
 ## Build an IPA
 
@@ -30,6 +38,8 @@ Run this command:
 ```sh
 bash Tools/build_ipa.sh
 ```
+
+The same IPA supports a gamepad and a physical keyboard and mouse. FactorioPad keeps Factorio's default key bindings.
 
 The IPA appears at `dist/FactorioPad.ipa`. Move it to your device through Files or iCloud Drive.
 Install it with [AltStore Classic](https://faq.altstore.io/altstore-classic/altserver) or [SideStore](https://docs.sidestore.io/docs/installation/prerequisites).
@@ -48,8 +58,3 @@ With a free Apple Account, refresh the installed app within seven days. You do n
 6. In Signing & Capabilities, select your Apple team.
 7. Set a unique Bundle Identifier, such as `com.yourname.FactorioPad`.
 8. Press Run.
-
-## Limitations
-
-- Physical keyboards and mice are not supported for now.
-- Not every keyboard key is available on the gamepad. Tab is not mapped.

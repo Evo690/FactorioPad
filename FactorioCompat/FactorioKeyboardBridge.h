@@ -35,7 +35,14 @@ void FactorioKeyboardKeyUp(
     int32_t keycode
 );
 
+void FactorioKeyboardPhysicalKeyDown(int32_t scancode, int32_t keycode);
+void FactorioKeyboardPhysicalKeyUp(int32_t scancode, int32_t keycode);
+
 void FactorioKeyboardSetModifierState(
+    uint16_t modifiers
+);
+
+void FactorioKeyboardSetPhysicalModifierState(
     uint16_t modifiers
 );
 

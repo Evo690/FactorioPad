@@ -185,8 +185,14 @@ static FPSDLSetModStateFn
 static FPUint16
     gSyntheticModifiers = 0;
 
+static FPUint16
+    gPhysicalModifiers = 0;
+
 static FPUint32
     gSyntheticMouseButtons = 0;
+
+enum { FP_KEY_SYNTHETIC = 1, FP_KEY_PHYSICAL = 2, FP_KEY_COUNT = 512 };
+static FPUint8 gKeySources[FP_KEY_COUNT];
 
 static NSObject *FPInputLock(void)
 {
@@ -337,7 +343,9 @@ FactorioKeyboardBridgeSetGuestHandle(
             if (handle) NSLog(@"[FactorioPad] The guest is missing required SDL input functions.");
         }
         gSyntheticModifiers = 0;
+        gPhysicalModifiers = 0;
         gSyntheticMouseButtons = 0;
+        memset(gKeySources, 0, sizeof(gKeySources));
         return ready;
     }
 }
@@ -526,9 +534,18 @@ FactorioKeyboardSetModifierState(
 
         if (gSetModState) {
             gSetModState(
-                modifiers
+                gSyntheticModifiers | gPhysicalModifiers
             );
         }
+    }
+}
+
+void
+FactorioKeyboardSetPhysicalModifierState(uint16_t modifiers)
+{
+    @synchronized (FPInputLock()) {
+        gPhysicalModifiers = modifiers;
+        if (gSetModState) gSetModState(gSyntheticModifiers | gPhysicalModifiers);
     }
 }
 
@@ -549,7 +566,7 @@ FPPushKeyboardState(
 
         if (gSetModState) {
             gSetModState(
-                gSyntheticModifiers
+                gSyntheticModifiers | gPhysicalModifiers
             );
         }
 
@@ -599,7 +616,7 @@ FPPushKeyboardState(
         keycode;
 
     event.key.keysym.mod =
-        gSyntheticModifiers;
+        gSyntheticModifiers | gPhysicalModifiers;
 
     gPushEvent(
         &event
@@ -607,36 +624,40 @@ FPPushKeyboardState(
 }
 
 
-void
-FactorioKeyboardKeyDown(
-    int32_t scancode,
-    int32_t keycode
-)
+static void
+FPSetKeySource(int32_t scancode, int32_t keycode, FPUint8 source, FPUint8 state)
 {
-    @synchronized (FPInputLock()) {
-        FPPushKeyboardState(
-            scancode,
-            keycode,
-            FP_SDL_PRESSED
-        );
+    if (scancode < 0 || scancode >= FP_KEY_COUNT) return;
+    FPUint8 previous = gKeySources[scancode];
+    if (state == FP_SDL_PRESSED) {
+        if (previous & source) return;
+        gKeySources[scancode] = previous | source;
+        if (!previous) FPPushKeyboardState(scancode, keycode, state);
+    } else {
+        if (!(previous & source)) return;
+        gKeySources[scancode] = previous & ~source;
+        if (!gKeySources[scancode]) FPPushKeyboardState(scancode, keycode, state);
     }
 }
 
-
-
-void
-FactorioKeyboardKeyUp(
-    int32_t scancode,
-    int32_t keycode
-)
+void FactorioKeyboardKeyDown(int32_t scancode, int32_t keycode)
 {
-    @synchronized (FPInputLock()) {
-        FPPushKeyboardState(
-            scancode,
-            keycode,
-            FP_SDL_RELEASED
-        );
-    }
+    @synchronized (FPInputLock()) { FPSetKeySource(scancode, keycode, FP_KEY_SYNTHETIC, FP_SDL_PRESSED); }
+}
+
+void FactorioKeyboardKeyUp(int32_t scancode, int32_t keycode)
+{
+    @synchronized (FPInputLock()) { FPSetKeySource(scancode, keycode, FP_KEY_SYNTHETIC, FP_SDL_RELEASED); }
+}
+
+void FactorioKeyboardPhysicalKeyDown(int32_t scancode, int32_t keycode)
+{
+    @synchronized (FPInputLock()) { FPSetKeySource(scancode, keycode, FP_KEY_PHYSICAL, FP_SDL_PRESSED); }
+}
+
+void FactorioKeyboardPhysicalKeyUp(int32_t scancode, int32_t keycode)
+{
+    @synchronized (FPInputLock()) { FPSetKeySource(scancode, keycode, FP_KEY_PHYSICAL, FP_SDL_RELEASED); }
 }
 
 

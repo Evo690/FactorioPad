@@ -44,7 +44,7 @@ int main(void)
             [events removeAllObjects];
             pad.dpad.up.pressedChangedHandler(pad.dpad.up, 1, YES);
             pad.dpad.up.pressedChangedHandler(pad.dpad.up, 0, NO);
-            NSCAssert(events.count == 7, @"filter must send six shortcut events and release the number");
+            NSCAssert(events.count == 6, @"filter must send six shortcut events");
             FPSDLEvent click;
             [events[2] getBytes:&click length:sizeof(click)];
             NSCAssert(click.type == FP_SDL_MOUSEBUTTONDOWN && click.button.button == FP_MOUSE_RIGHT &&
@@ -54,7 +54,7 @@ int main(void)
             [events removeAllObjects];
             pad.dpad.right.pressedChangedHandler(pad.dpad.right, 1, YES);
             FPSDLEvent weapon;
-            [events[0] getBytes:&weapon length:sizeof(weapon)];
+            [events[1] getBytes:&weapon length:sizeof(weapon)];
             NSCAssert(weapon.key.keysym.scancode == FP_SC_C && weapon.key.keysym.mod == 0 &&
                 sdlModifiers == FP_MOD_LCTRL, @"next weapon must restore the held shoulder");
         });
@@ -109,6 +109,39 @@ int main(void)
         dispatch_sync(gControllerQueue, ^{ FPReleaseEverything(); });
         FactorioInputPerform(^{ NSCAssert(gSyntheticModifiers == 0 && gSyntheticMouseButtons == 0,
             @"suspension must leave no held modifiers or mouse buttons"); });
+        [events removeAllObjects];
+        FactorioKeyboardPhysicalKeyDown(FP_SC_W, 0);
+        dispatch_sync(gControllerQueue, ^{
+            pad.leftThumbstick.valueChangedHandler(pad.leftThumbstick, 0, 1);
+        });
+        FactorioKeyboardPhysicalKeyUp(FP_SC_W, 0);
+        NSCAssert(events.count == 1 && gKeySources[FP_SC_W] == FP_KEY_SYNTHETIC,
+            @"releasing physical W must not stop a held gamepad direction");
+        dispatch_sync(gControllerQueue, ^{
+            pad.leftThumbstick.valueChangedHandler(pad.leftThumbstick, 0, 0);
+        });
+        NSCAssert(events.count == 2 && gKeySources[FP_SC_W] == 0,
+            @"the last owner must release W");
+        [events removeAllObjects];
+        dispatch_sync(gControllerQueue, ^{
+            pad.leftThumbstick.valueChangedHandler(pad.leftThumbstick, 0, 1);
+        });
+        FactorioKeyboardPhysicalKeyDown(FP_SC_W, 0);
+        dispatch_sync(gControllerQueue, ^{ FPReleaseEverything(); });
+        NSCAssert(gKeySources[FP_SC_W] == FP_KEY_PHYSICAL,
+            @"disconnecting the gamepad must preserve a physical key");
+        FactorioKeyboardPhysicalKeyUp(FP_SC_W, 0);
+        NSCAssert(gKeySources[FP_SC_W] == 0, @"releasing the physical key must clear its last owner");
+        FactorioKeyboardSetModifierState(FP_MOD_LCTRL);
+        FactorioKeyboardSetPhysicalModifierState(FP_MOD_LSHIFT);
+        FactorioKeyboardKeyDown(FP_SC_W, 'w');
+        NSCAssert(sdlModifiers == (FP_MOD_LCTRL | FP_MOD_LSHIFT),
+            @"physical and controller modifiers must coexist");
+        FactorioKeyboardSetModifierState(0);
+        FactorioKeyboardKeyUp(FP_SC_W, 'w');
+        NSCAssert(sdlModifiers == FP_MOD_LSHIFT,
+            @"releasing the controller must preserve a held physical modifier");
+        FactorioKeyboardSetPhysicalModifierState(0);
         NSUInteger previousCount = events.count;
         FactorioMouseButton(0, YES, 0, 0);
         FactorioMouseButton(33, YES, 0, 0);

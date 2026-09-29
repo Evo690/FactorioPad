@@ -39,6 +39,17 @@ static NSString *FactorioWritableRoot(void)
         stringByAppendingPathComponent:FactorioDataDirectoryName];
 }
 
+static NSArray<NSString *> *FactorioControllerBindings(void)
+{
+    return @[
+        @"pick-items=SHIFT + E", @"drop-cursor=SHIFT + Q", @"show-info=CONTROL + SPACE",
+        @"toggle-driving=CONTROL + E", @"copy=CONTROL + Q", @"cut=CONTROL + SHIFT + Q",
+        @"paste=CONTROL + R", @"undo=CONTROL + SHIFT + R", @"redo=CONTROL + SHIFT + SPACE",
+        @"open-technology-gui=SHIFT + M", @"production-statistics=CONTROL + M",
+        @"toggle-blueprint-library=CONTROL + SHIFT + M"
+    ];
+}
+
 static NSString *FactorioDefaultConfig(
     NSString *readDataPath,
     NSString *writeDataPath
@@ -69,21 +80,7 @@ static NSString *FactorioDefaultConfig(
          "\n"
          "[controller]\n"
          "icons=xbox\n"
-         "button-layout=western\n"
-         "\n"
-         "[controls]\n"
-         "pick-items=SHIFT + E\n"
-         "drop-cursor=SHIFT + Q\n"
-         "show-info=CONTROL + SPACE\n"
-         "toggle-driving=CONTROL + E\n"
-         "copy=CONTROL + Q\n"
-         "cut=CONTROL + SHIFT + Q\n"
-         "paste=CONTROL + R\n"
-         "undo=CONTROL + SHIFT + R\n"
-         "redo=CONTROL + SHIFT + SPACE\n"
-         "open-technology-gui=SHIFT + M\n"
-         "production-statistics=CONTROL + M\n"
-         "toggle-blueprint-library=CONTROL + SHIFT + M\n",
+         "button-layout=western\n",
         readDataPath,
         writeDataPath];
 }
@@ -151,6 +148,57 @@ static NSString *FactorioUpdateConfigPaths(
     return [result componentsJoinedByString:@"\n"];
 }
 
+static NSString *FactorioApplyControlSection(
+    NSString *config,
+    NSString *section,
+    NSArray<NSString *> *bindings,
+    BOOL enabled
+)
+{
+    NSArray<NSString *> *lines = [config componentsSeparatedByString:@"\n"];
+    NSMutableArray<NSString *> *result = [NSMutableArray arrayWithCapacity:lines.count + bindings.count];
+    NSMutableSet<NSString *> *present = [NSMutableSet set];
+    __block BOOL inSection = NO;
+    BOOL foundSection = NO;
+    void (^appendMissing)(void) = ^{
+        if (!enabled || !inSection) return;
+        for (NSString *binding in bindings) {
+            NSString *key = [[binding componentsSeparatedByString:@"="] firstObject];
+            if (![present containsObject:key]) [result addObject:binding];
+        }
+    };
+
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if ([trimmed hasPrefix:@"["] && [trimmed hasSuffix:@"]"]) {
+            appendMissing();
+            inSection = [trimmed caseInsensitiveCompare:section] == NSOrderedSame;
+            foundSection = foundSection || inSection;
+            [present removeAllObjects];
+        }
+        BOOL removeLine = NO;
+        if (inSection) {
+            NSRange equals = [trimmed rangeOfString:@"="];
+            NSString *key = equals.location == NSNotFound ? @"" : [[trimmed substringToIndex:equals.location]
+                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            for (NSString *binding in bindings) {
+                if ([binding hasPrefix:[key stringByAppendingString:@"="]]) {
+                    [present addObject:key];
+                    removeLine = !enabled && [trimmed isEqualToString:binding];
+                    break;
+                }
+            }
+        }
+        if (!removeLine) [result addObject:line];
+    }
+    appendMissing();
+    if (enabled && !foundSection) {
+        [result addObject:section];
+        [result addObjectsFromArray:bindings];
+    }
+    return [result componentsJoinedByString:@"\n"];
+}
+
 #if DEBUG
 static void FactorioCheckConfigUpdater(void)
 {
@@ -213,6 +261,10 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         config = FactorioDefaultConfig(readDataPath, root);
     } else {
         config = FactorioUpdateConfigPaths(config, readDataPath, root);
+        config = FactorioApplyControlSection(config, @"[input]",
+            @[@"heading-vehicle-driving=true"], YES);
+        config = FactorioApplyControlSection(config, @"[controls]",
+            FactorioControllerBindings(), NO);
     }
 
     if (![config writeToFile:configPath

@@ -42,19 +42,58 @@ int main(void)
         dispatch_sync(gControllerQueue, ^{
             pad.leftThumbstick.valueChangedHandler(pad.leftThumbstick, 1.0f, 1.0f);
             pad.buttonA.pressedChangedHandler(pad.buttonA, 1.0f, YES);
+            pad.buttonY.pressedChangedHandler(pad.buttonY, 1.0f, YES);
             pad.rightTrigger.pressedChangedHandler(pad.rightTrigger, 1.0f, YES);
-            NSCAssert(heldKeys[FP_SC_W] && heldKeys[FP_SC_D] && heldKeys[FP_SC_E] && heldMouse[FP_MOUSE_LEFT],
+            NSCAssert(heldKeys[FP_SC_W] && heldKeys[FP_SC_D] && keyDownCounts[FP_SC_E] == 1 &&
+                heldKeys[FP_SC_SPACE] && heldMouse[FP_MOUSE_LEFT],
                 @"controller inputs must reach the guest");
             FPReleaseEverything();
-            NSCAssert(!heldKeys[FP_SC_W] && !heldKeys[FP_SC_D] && !heldKeys[FP_SC_E] && !heldMouse[FP_MOUSE_LEFT],
+            NSCAssert(!heldKeys[FP_SC_W] && !heldKeys[FP_SC_D] && !heldKeys[FP_SC_SPACE] && !heldMouse[FP_MOUSE_LEFT],
                 @"disconnecting or suspending must release movement, actions and mouse buttons");
-            pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 1.0f, YES);
-            pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 1.0f, YES);
-            pad.buttonB.pressedChangedHandler(pad.buttonB, 1.0f, YES);
-            NSCAssert(modifierState == (FP_MOD_LSHIFT | FP_MOD_LCTRL) && heldKeys[FP_SC_Q],
-                @"LB + RB + B must send Ctrl + Shift + Q for Cut");
+            GCControllerButtonInput *actionButtons[] = {pad.buttonA, pad.buttonB, pad.buttonX,
+                pad.buttonY, pad.buttonOptions};
+            const int expectedKeys[5][4] = {
+                {FP_SC_E, FP_SC_F, FP_SC_RETURN, FP_SC_RETURN},
+                {FP_SC_Q, FP_SC_Z, FP_SC_C, FP_SC_X},
+                {FP_SC_R, FP_SC_R, FP_SC_V, FP_SC_Z},
+                {FP_SC_SPACE, FP_SC_SPACE, FP_SC_LALT, FP_SC_Y},
+                {FP_SC_M, FP_SC_T, FP_SC_P, FP_SC_B}
+            };
+            const uint16_t expectedMods[5][4] = {
+                {0, 0, 0, 0},
+                {0, 0, FP_MOD_LCTRL, FP_MOD_LCTRL},
+                {0, FP_MOD_LSHIFT, FP_MOD_LCTRL, FP_MOD_LCTRL},
+                {0, FP_MOD_LSHIFT, 0, FP_MOD_LCTRL},
+                {0, 0, 0, 0}
+            };
+            for (NSUInteger combination = 0; combination < 4; combination++) {
+                if (combination & 1) pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 1, YES);
+                if (combination & 2) pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 1, YES);
+                for (NSUInteger action = 0; action < 5; action++) {
+                    GCControllerButtonInput *button = actionButtons[action];
+                    int scancode = expectedKeys[action][combination];
+                    NSUInteger count = keyDownCounts[scancode];
+                    button.pressedChangedHandler(button, 1, YES);
+                    NSCAssert(keyDownCounts[scancode] == count + 1 &&
+                        keyDownModifiers[scancode] == expectedMods[action][combination],
+                        @"each controller chord must send the Factorio default shortcut");
+                    button.pressedChangedHandler(button, 0, NO);
+                    NSCAssert(!heldKeys[scancode] && modifierState ==
+                        ((combination & 1 ? FP_MOD_LSHIFT : 0) | (combination & 2 ? FP_MOD_LCTRL : 0)),
+                        @"button release must restore the held shoulder modifiers");
+                }
+                if (combination & 1) pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 0, NO);
+                if (combination & 2) pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 0, NO);
+            }
+            pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 1, YES);
+            pad.buttonA.pressedChangedHandler(pad.buttonA, 1, YES);
+            pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 1, YES);
+            NSCAssert(heldKeys[FP_SC_F] && modifierState == 0 && !heldKeys[FP_SC_LCTRL],
+                @"pickup must stay held without shoulder modifiers even if RB changes");
+            pad.buttonA.pressedChangedHandler(pad.buttonA, 0, NO);
+            NSCAssert(!heldKeys[FP_SC_F] && modifierState == (FP_MOD_LSHIFT | FP_MOD_LCTRL),
+                @"pickup release must restore both shoulders");
             FPReleaseEverything();
-            NSCAssert(modifierState == 0 && !heldKeys[FP_SC_Q], @"all combination keys must release");
             pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 1, YES);
             pad.dpad.up.pressedChangedHandler(pad.dpad.up, 1, YES);
             NSCAssert(heldKeys[FP_SC_1] && keyDownModifiers[FP_SC_1] == FP_MOD_LSHIFT,
@@ -100,7 +139,8 @@ int main(void)
             pad.leftTrigger.pressedChangedHandler(pad.leftTrigger, 0, NO);
             pad.leftThumbstick.valueChangedHandler(pad.leftThumbstick, 1, 0);
             pad.dpad.down.pressedChangedHandler(pad.dpad.down, 1, YES);
-            NSCAssert(gD && heldKeys[FP_SC_D], @"the planner shortcut must preserve rightward movement");
+            NSCAssert(gD && heldKeys[FP_SC_D] && keyDownModifiers[FP_SC_D] == FP_MOD_LCTRL,
+                @"the planner shortcut must resume rightward movement without Alt");
             pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 0, NO);
             pad.dpad.down.pressedChangedHandler(pad.dpad.down, 0, NO);
             NSCAssert(heldKeys[FP_SC_D] && !heldKeys[FP_SC_3],

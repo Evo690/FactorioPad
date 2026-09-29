@@ -1,17 +1,41 @@
 import SwiftUI
 
 @main
-struct FactorioPadApp: App {
-    init() {
+final class FactorioPadApp: UIResponder, UIApplicationDelegate {
+    override init() {
+        super.init()
         // Discard unused transfer data from earlier development builds.
         UserDefaults.standard.removeObject(forKey: "FactorioAccountSourceBookmark")
         try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appending(path: "factorio-account.json"))
     }
-    var body: some Scene {
-        WindowGroup {
-            FactorioLaunchView()
-        }
+
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+        options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
+        configuration.delegateClass = FactorioSceneDelegate.self
+        return configuration
     }
+}
+
+final class FactorioSceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+        options: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = FactorioRootController(rootView: FactorioLaunchView())
+        window.makeKeyAndVisible()
+        self.window = window
+    }
+}
+
+final class FactorioRootController: UIHostingController<FactorioLaunchView> {
+    weak var gameController: FactorioViewController?
+
+    override var prefersPointerLocked: Bool { gameController?.prefersPointerLocked ?? false }
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
 }
 
 extension Notification.Name {

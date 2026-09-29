@@ -11,6 +11,8 @@ xcrun clang++ -fobjc-arc -fblocks -IFactorioCompat -framework Foundation -framew
 "$test_dir/config"
 xcrun swiftc FactorioPad/FactorioOnScreenKeyboard.swift Tests/test_keyboard.swift -o "$test_dir/keyboard"
 "$test_dir/keyboard"
+xcrun swiftc FactorioPad/FactorioMouseButtonSources.swift Tests/test_mouse_buttons.swift -o "$test_dir/mouse-buttons"
+"$test_dir/mouse-buttons"
 xcrun clang -fobjc-arc -fblocks -framework Foundation Tests/test_keyboard_bridge.m -o "$test_dir/keyboard-bridge"
 "$test_dir/keyboard-bridge"
 xcrun clang -fobjc-arc -fblocks -framework Foundation -framework GameController -framework QuartzCore -framework CoreGraphics \

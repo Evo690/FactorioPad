@@ -52,6 +52,7 @@ fi
 
 mkdir -p "$ROOT/dist"
 
+echo "Game files ready. Building the iOS app now; Xcode may stay quiet for several minutes..."
 xcodebuild -quiet \
     -project "$ROOT/FactorioPad.xcodeproj" \
     -scheme FactorioPad \
@@ -64,7 +65,7 @@ PRODUCT="$WORK/DerivedData/Build/Products/Release-iphoneos/FactorioPad.app"
 test -f "$PRODUCT/FactorioPad"
 test -f "$PRODUCT/Frameworks/FactorioGuest.framework/FactorioGuest"
 test -d "$PRODUCT/FactorioData/base"
-
+echo "iOS build complete. Packaging the IPA..."
 mkdir -p "$WORK/Payload"
 mv "$PRODUCT" "$WORK/Payload/FactorioPad.app"
 /usr/bin/ditto -c -k --keepParent "$WORK/Payload" "$WORK/FactorioPad.ipa"

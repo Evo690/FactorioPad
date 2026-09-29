@@ -5,10 +5,27 @@ import UIKit
 
 final class FactorioHostUIView: UIView {
     var inputEnabled = true {
-        didSet { setInputActive(window != nil && UIApplication.shared.applicationState == .active) }
+        didSet {
+            setInputActive(window != nil && UIApplication.shared.applicationState == .active)
+            updatePointerLockPreference()
+        }
     }
+    weak var hostController: FactorioViewController?
+    var hasPhysicalMouse: Bool { !mice.isEmpty }
+    private var useRawMouse: Bool {
+        hasPhysicalMouse && (UIDevice.current.userInterfaceIdiom == .phone
+            || window?.windowScene?.pointerLockState?.isLocked == true)
+    }
+    private var hasPhysicalKeyboard: Bool { GCKeyboard.coalesced != nil }
+    private var hasGamepad: Bool { GCController.controllers().contains { $0.extendedGamepad != nil } }
     private static var factorioStarted = false
     private var primaryTouch: UITouch?
+    private var pressedKeys = Set<Int>()
+    private var mouseButtons: UIEvent.ButtonMask = []
+    private var mouseButtonSources = FactorioMouseButtonSources()
+    private var pointerPosition: CGPoint?
+    private var scrollRemainder = CGPoint.zero
+    private var mice: [GCMouse] = []
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
@@ -17,6 +34,7 @@ final class FactorioHostUIView: UIView {
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
 
     override class var layerClass: AnyClass { FactorioMetalLayer.self }
+    override var canBecomeFirstResponder: Bool { true }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -26,7 +44,7 @@ final class FactorioHostUIView: UIView {
         onScreenKeyboard.isHidden = true
         onScreenKeyboard.onClose = { [weak self] in
             self?.onScreenKeyboard.isHidden = true
-            self?.keyboardButton.isHidden = false
+            self?.updateKeyboardButton()
             self?.keyboardButton.accessibilityLabel = "Show keyboard"
         }
         addSubview(controllerCursor)
@@ -44,12 +62,60 @@ final class FactorioHostUIView: UIView {
         controlsPress.minimumPressDuration = 0.5
         keyboardButton.addGestureRecognizer(controlsPress)
         addSubview(keyboardButton)
+        updateKeyboardButton()
+
+        let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
+        addGestureRecognizer(hover)
+        let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
+        scroll.allowedScrollTypesMask = .all
+        scroll.allowedTouchTypes = []
+        scroll.cancelsTouchesInView = false
+        addGestureRecognizer(scroll)
 
         let center = NotificationCenter.default
         lifecycleObservers.append(center.addObserver(forName: UIApplication.willResignActiveNotification,
             object: nil, queue: .main) { [weak self] _ in self?.setInputActive(false) })
         lifecycleObservers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification,
-            object: nil, queue: .main) { [weak self] _ in self?.setInputActive(true) })
+            object: nil, queue: .main) { [weak self] _ in
+                self?.setInputActive(true)
+                if Self.factorioStarted { self?.configureAudioSession() }
+            })
+        lifecycleObservers.append(center.addObserver(forName: AVAudioSession.resumptionRecommendationNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] notification in
+                guard let context = notification.userInfo?[AVAudioSession.resumptionContextKey]
+                    as? AVAudioSession.ResumptionContext,
+                    context.recommendation == .shouldResume,
+                    UIApplication.shared.applicationState == .active else { return }
+                self?.configureAudioSession()
+            })
+        lifecycleObservers.append(center.addObserver(forName: NSNotification.Name.GCMouseDidConnect,
+            object: nil, queue: .main) { [weak self] notification in
+            if let mouse = notification.object as? GCMouse { self?.installMouse(mouse) }
+        })
+        lifecycleObservers.append(center.addObserver(forName: NSNotification.Name.GCMouseDidDisconnect,
+            object: nil, queue: .main) { [weak self] notification in
+            guard let self, let mouse = notification.object as? GCMouse,
+                self.mice.contains(where: { $0 === mouse }) else { return }
+            let buttons = self.mouseButtonSources.remove(ObjectIdentifier(mouse))
+            self.mice.removeAll { $0 === mouse }
+            if self.mice.isEmpty {
+                self.releaseMouseInput()
+            } else if self.useRawMouse {
+                self.updateMouseButtons(UIEvent.ButtonMask(rawValue: buttons),
+                    at: self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition())
+            }
+            self.updatePointerLockPreference()
+            for replacement in GCMouse.mice() { self.installMouse(replacement) }
+        })
+        lifecycleObservers.append(center.addObserver(forName: UIPointerLockState.didChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in self?.releaseMouseInput() })
+        for name in [Notification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect,
+            .GCControllerDidConnect, .GCControllerDidDisconnect] {
+            lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) {
+                [weak self] _ in self?.updateKeyboardButton()
+            })
+        }
+        for mouse in GCMouse.mice() { installMouse(mouse) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -71,8 +137,11 @@ final class FactorioHostUIView: UIView {
         cursorDisplayLink?.isPaused = !active
         FactorioControllerBridgeSetActive(active)
         if !active {
+            releasePhysicalInput()
             FactorioTouchCancel()
             onScreenKeyboard.reset()
+        } else if window != nil {
+            becomeFirstResponder()
         }
         // Keep the game rendering under help sheets. Suspend only for app lifecycle events.
         FactorioMetalLayer.setApplicationActive(applicationActive)
@@ -88,6 +157,7 @@ final class FactorioHostUIView: UIView {
             cursorDisplayLink = displayLink
         }
         setInputActive(UIApplication.shared.applicationState == .active)
+        updatePointerLockPreference()
         // Startup waits for a nonzero layout instead of assuming an iPad model.
         setNeedsLayout()
     }
@@ -114,14 +184,24 @@ final class FactorioHostUIView: UIView {
     }
 
     @objc private func updateControllerCursor() {
-        controllerCursor.isHidden = !inputActive || !GCController.controllers().contains { $0.extendedGamepad != nil }
+        controllerCursor.isHidden = !inputActive || (!(hasPhysicalMouse && useRawMouse)
+            && !GCController.controllers().contains { $0.extendedGamepad != nil })
         controllerCursor.frame.origin = FactorioControllerBridgeGetCursorPosition()
     }
 
     @objc private func toggleKeyboard() {
+        guard !hasPhysicalKeyboard || hasGamepad else { return }
         onScreenKeyboard.isHidden.toggle()
-        keyboardButton.isHidden = !onScreenKeyboard.isHidden
+        updateKeyboardButton()
         keyboardButton.accessibilityLabel = onScreenKeyboard.isHidden ? "Show keyboard" : "Hide keyboard"
+    }
+
+    private func updateKeyboardButton() {
+        if hasPhysicalKeyboard && !hasGamepad {
+            onScreenKeyboard.isHidden = true
+            onScreenKeyboard.reset()
+        }
+        keyboardButton.isHidden = (hasPhysicalKeyboard && !hasGamepad) || !onScreenKeyboard.isHidden
     }
 
     @objc private func showControls(_ gesture: UILongPressGestureRecognizer) {
@@ -143,7 +223,7 @@ final class FactorioHostUIView: UIView {
 
     private func requestControls() {
         onScreenKeyboard.isHidden = true
-        keyboardButton.isHidden = false
+        updateKeyboardButton()
         keyboardButton.accessibilityLabel = "Show keyboard"
         NotificationCenter.default.post(name: .factorioControlsRequested, object: nil)
     }
@@ -154,8 +234,181 @@ final class FactorioHostUIView: UIView {
         send(point.x, point.y)
     }
 
+    private func physicalModifiers() -> UInt16 {
+        let keys = pressedKeys
+        return (keys.contains(225) ? 0x0001 : 0) | (keys.contains(229) ? 0x0002 : 0)
+            | (keys.contains(224) ? 0x0040 : 0) | (keys.contains(228) ? 0x0080 : 0)
+            | (keys.contains(226) ? 0x0100 : 0) | (keys.contains(230) ? 0x0200 : 0)
+            | (keys.contains(227) ? 0x0400 : 0) | (keys.contains(231) ? 0x0800 : 0)
+    }
+
+    private func releasePhysicalInput() {
+        FactorioInputPerform {
+            for key in self.pressedKeys { FactorioKeyboardPhysicalKeyUp(Int32(key), 0) }
+            self.pressedKeys.removeAll()
+            FactorioKeyboardSetPhysicalModifierState(0)
+        }
+        releaseMouseInput()
+    }
+
+    private func releaseMouseInput() {
+        mouseButtonSources.removeAll()
+        if !mouseButtons.isEmpty {
+            updateMouseButtons([], at: pointerPosition ?? FactorioControllerBridgeGetCursorPosition())
+        }
+        pointerPosition = nil
+        scrollRemainder = .zero
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard inputActive else { super.pressesBegan(presses, with: event); return }
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            guard let key = press.key, (4...231).contains(Int(key.keyCode.rawValue)) else {
+                unhandled.insert(press)
+                continue
+            }
+            // UIKit HID usage values match SDL scancodes for standard keyboard keys.
+            let code = Int(key.keyCode.rawValue)
+            FactorioInputPerform {
+                if self.pressedKeys.insert(code).inserted {
+                    FactorioKeyboardSetPhysicalModifierState(self.physicalModifiers())
+                    FactorioKeyboardPhysicalKeyDown(Int32(code), 0)
+                } else if code == 42 {
+                    FactorioKeyboardBackspace()
+                }
+                if !key.modifierFlags.contains(.command) && !key.modifierFlags.contains(.control)
+                    && !key.characters.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                    FactorioKeyboardInsertText(key.characters)
+                }
+            }
+        }
+        if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let unhandled = endPresses(presses)
+        if !unhandled.isEmpty { super.pressesEnded(unhandled, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let unhandled = endPresses(presses)
+        if !unhandled.isEmpty { super.pressesCancelled(unhandled, with: event) }
+    }
+
+    private func endPresses(_ presses: Set<UIPress>) -> Set<UIPress> {
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            guard let key = press.key else { unhandled.insert(press); continue }
+            let code = Int(key.keyCode.rawValue)
+            guard pressedKeys.contains(code) else { unhandled.insert(press); continue }
+            FactorioInputPerform {
+                FactorioKeyboardPhysicalKeyUp(Int32(code), 0)
+                self.pressedKeys.remove(code)
+                FactorioKeyboardSetPhysicalModifierState(self.physicalModifiers())
+            }
+        }
+        return unhandled
+    }
+
+    private func movePointer(to point: CGPoint) {
+        let point = CGPoint(x: min(max(point.x, 0), max(bounds.width - 1, 0)),
+            y: min(max(point.y, 0), max(bounds.height - 1, 0)))
+        let old = pointerPosition ?? point
+        pointerPosition = point
+        FactorioControllerBridgeSetCursorPosition(point.x, point.y)
+        FactorioMouseMove(Int32(point.x.rounded()), Int32(point.y.rounded()),
+            Int32(point.x.rounded() - old.x.rounded()), Int32(point.y.rounded() - old.y.rounded()))
+    }
+
+    private func updateMouseButtons(_ buttons: UIEvent.ButtonMask, at point: CGPoint) {
+        for (mask, button) in [(UIEvent.ButtonMask.primary, UInt8(1)), (.secondary, 3), (.button(3), 2)] {
+            if mouseButtons.contains(mask) != buttons.contains(mask) {
+                FactorioMouseButton(button, buttons.contains(mask), Int32(point.x.rounded()), Int32(point.y.rounded()))
+            }
+        }
+        mouseButtons = buttons
+    }
+
+    private func pointerEvent(_ touch: UITouch, buttons: UIEvent.ButtonMask) {
+        let point = touch.location(in: self)
+        FactorioInputPerform {
+            self.movePointer(to: point)
+            self.updateMouseButtons(buttons, at: point)
+        }
+    }
+
+    private func installMouse(_ mouse: GCMouse) {
+        guard !mice.contains(where: { $0 === mouse }), let input = mouse.mouseInput else { return }
+        let device = ObjectIdentifier(mouse)
+        mice.append(mouse)
+        updatePointerLockPreference()
+        mouse.handlerQueue = .main
+        input.mouseMovedHandler = { [weak self] _, dx, dy in
+            guard let self, self.inputActive, self.useRawMouse else { return }
+            let origin = self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
+            let speed: CGFloat = 1.0
+            self.movePointer(to: CGPoint(x: origin.x + CGFloat(dx) * speed,
+                y: origin.y - CGFloat(dy) * speed))
+        }
+        input.leftButton.pressedChangedHandler = { [weak self] _, _, pressed in
+            self?.mouseButton(.primary, pressed: pressed, from: device)
+        }
+        input.rightButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+            self?.mouseButton(.secondary, pressed: pressed, from: device)
+        }
+        input.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+            self?.mouseButton(.button(3), pressed: pressed, from: device)
+        }
+        input.scroll.valueChangedHandler = { [weak self] _, x, y in
+            guard let self, self.inputActive, self.useRawMouse else { return }
+            self.scrollRemainder.x += CGFloat(x)
+            self.scrollRemainder.y += CGFloat(y)
+            let stepsX = Int32(self.scrollRemainder.x.rounded(.towardZero))
+            let stepsY = Int32(self.scrollRemainder.y.rounded(.towardZero))
+            self.scrollRemainder.x -= CGFloat(stepsX)
+            self.scrollRemainder.y -= CGFloat(stepsY)
+            if stepsX != 0 || stepsY != 0 { FactorioMouseWheel(stepsX, stepsY) }
+        }
+    }
+
+    private func mouseButton(_ button: UIEvent.ButtonMask, pressed: Bool, from device: ObjectIdentifier) {
+        guard inputActive, useRawMouse, mice.contains(where: { ObjectIdentifier($0) == device }) else { return }
+        let point = pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
+        let buttons = mouseButtonSources.set(button.rawValue, pressed: pressed, for: device)
+        updateMouseButtons(UIEvent.ButtonMask(rawValue: buttons), at: point)
+    }
+
+    private func updatePointerLockPreference() {
+        (window?.rootViewController ?? hostController)?.setNeedsUpdateOfPrefersPointerLocked()
+    }
+
+    @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
+        guard inputActive, !useRawMouse,
+            gesture.state == .began || gesture.state == .changed else { return }
+        movePointer(to: gesture.location(in: self))
+    }
+
+    @objc private func pointerScrolled(_ gesture: UIPanGestureRecognizer) {
+        guard inputActive, !useRawMouse,
+            gesture.state == .began || gesture.state == .changed else { return }
+        let delta = gesture.translation(in: self)
+        gesture.setTranslation(.zero, in: self)
+        scrollRemainder.x += delta.x / 20
+        scrollRemainder.y -= delta.y / 20
+        let x = Int32(scrollRemainder.x.rounded(.towardZero))
+        let y = Int32(scrollRemainder.y.rounded(.towardZero))
+        scrollRemainder.x -= CGFloat(x)
+        scrollRemainder.y -= CGFloat(y)
+        if x != 0 || y != 0 { FactorioMouseWheel(x, y) }
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
+        if let pointer = touches.first(where: { $0.type == .indirectPointer }) {
+            if inputActive && !useRawMouse { pointerEvent(pointer, buttons: event?.buttonMask ?? .primary) }
+            return
+        }
         guard inputActive, primaryTouch == nil, let touch = touches.first else { return }
         primaryTouch = touch
         updateTouch(touch, send: FactorioTouchBegin)
@@ -163,6 +416,10 @@ final class FactorioHostUIView: UIView {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
+        if let pointer = touches.first(where: { $0.type == .indirectPointer }) {
+            if inputActive && !useRawMouse { pointerEvent(pointer, buttons: event?.buttonMask ?? mouseButtons) }
+            return
+        }
         guard inputActive, let primaryTouch, touches.contains(primaryTouch) else { return }
         for touch in event?.coalescedTouches(for: primaryTouch) ?? [primaryTouch] {
             updateTouch(touch, send: FactorioTouchMove)
@@ -171,6 +428,10 @@ final class FactorioHostUIView: UIView {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
+        if let pointer = touches.first(where: { $0.type == .indirectPointer }) {
+            if inputActive && !useRawMouse { pointerEvent(pointer, buttons: []) }
+            return
+        }
         guard inputActive, let primaryTouch, touches.contains(primaryTouch) else { return }
         updateTouch(primaryTouch, send: FactorioTouchEnd)
         self.primaryTouch = nil
@@ -178,6 +439,10 @@ final class FactorioHostUIView: UIView {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesCancelled(touches, with: event)
+        if touches.contains(where: { $0.type == .indirectPointer }) {
+            if !useRawMouse, let point = pointerPosition { updateMouseButtons([], at: point) }
+            return
+        }
         guard let primaryTouch, touches.contains(primaryTouch) else { return }
         FactorioTouchCancel()
         self.primaryTouch = nil
@@ -194,24 +459,31 @@ final class FactorioHostUIView: UIView {
 
 final class FactorioViewController: UIViewController {
     let gameView = FactorioHostUIView(frame: .zero)
+    override var prefersPointerLocked: Bool { gameView.inputEnabled && gameView.hasPhysicalMouse }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
     override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .landscapeRight }
-    override var prefersInterfaceOrientationLocked: Bool { true }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
     override func loadView() {
         view = UIView()
         view.backgroundColor = .black
+        gameView.hostController = self
         view.addSubview(gameView)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if let root = view.window?.rootViewController as? FactorioRootController {
+            root.gameController = self
+            root.setNeedsUpdateOfPrefersPointerLocked()
+        }
         setNeedsUpdateOfSupportedInterfaceOrientations()
-        setNeedsUpdateOfPrefersInterfaceOrientationLocked()
         setNeedsStatusBarAppearanceUpdate()
         setNeedsUpdateOfHomeIndicatorAutoHidden()
+        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        setNeedsUpdateOfPrefersPointerLocked()
         view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { error in
             NSLog("[FactorioPad] Landscape request: %@", error.localizedDescription)
         }
