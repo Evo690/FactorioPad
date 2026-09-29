@@ -107,7 +107,7 @@ static unsigned long gActionSequence = 0;
 static const FPShortcut gActionShortcuts[FP_ACTION_COUNT][4] = {
     {FP_SHORTCUT(FP_SC_E, 'e', 0, NO), FP_SHORTCUT(FP_SC_F, 'f', 0, YES),
      FP_SHORTCUT(FP_SC_RETURN, '\r', 0, NO), FP_SHORTCUT(FP_SC_RETURN, '\r', 0, NO)},
-    {FP_SHORTCUT(FP_SC_Q, 'q', 0, NO), FP_SHORTCUT(FP_SC_Z, 'z', 0, NO),
+    {FP_SHORTCUT(FP_SC_Q, 'q', 0, NO), FP_SHORTCUT(FP_SC_Z, 'z', 0, YES),
      FP_SHORTCUT(FP_SC_C, 'c', FP_MOD_LCTRL, NO), FP_SHORTCUT(FP_SC_X, 'x', FP_MOD_LCTRL, NO)},
     {FP_SHORTCUT(FP_SC_R, 'r', 0, NO), FP_SHORTCUT(FP_SC_R, 'r', FP_MOD_LSHIFT, NO),
      FP_SHORTCUT(FP_SC_V, 'v', FP_MOD_LCTRL, NO), FP_SHORTCUT(FP_SC_Z, 'z', FP_MOD_LCTRL, NO)},

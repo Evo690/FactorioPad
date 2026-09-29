@@ -86,6 +86,14 @@ int main(void)
                 if (combination & 2) pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 0, NO);
             }
             pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 1, YES);
+            pad.buttonB.pressedChangedHandler(pad.buttonB, 1, YES);
+            NSCAssert(heldKeys[FP_SC_Z] && modifierState == 0 && !heldKeys[FP_SC_LSHIFT],
+                @"LB + B must hold drop-item without Shift");
+            pad.buttonB.pressedChangedHandler(pad.buttonB, 0, NO);
+            NSCAssert(!heldKeys[FP_SC_Z] && modifierState == FP_MOD_LSHIFT && heldKeys[FP_SC_LSHIFT],
+                @"releasing B must stop dropping and restore LB");
+            pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 0, NO);
+            pad.leftShoulder.pressedChangedHandler(pad.leftShoulder, 1, YES);
             pad.buttonA.pressedChangedHandler(pad.buttonA, 1, YES);
             pad.rightShoulder.pressedChangedHandler(pad.rightShoulder, 1, YES);
             NSCAssert(heldKeys[FP_SC_F] && modifierState == 0 && !heldKeys[FP_SC_LCTRL],
