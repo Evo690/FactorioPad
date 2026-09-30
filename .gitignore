@@ -11,3 +11,4 @@ Vendor/
 dist/
 *.ipa
 *.xcarchive
+.zvec-grep/

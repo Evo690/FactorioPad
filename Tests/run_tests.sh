@@ -23,4 +23,6 @@ xcrun clang -fobjc-arc -fblocks -Wl,-export_dynamic -framework Foundation -frame
 "$test_dir/input"
 xcrun swiftc FactorioPad/FactorioControlsView.swift Tests/test_controls.swift -o "$test_dir/controls"
 "$test_dir/controls"
+xcrun swiftc FactorioPad/FactorioSaveSync.swift Tests/test_save_sync.swift -o "$test_dir/save-sync"
+"$test_dir/save-sync"
 python3 Tests/test_prepare_guest.py

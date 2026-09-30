@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FactorioControlsView: View {
     var onClose: () -> Void
+    var onSaves: () -> Void
 
     typealias Activity = (title: String, icon: String, controls: [(action: String, buttons: String)])
     static let activities: [Activity] = [
@@ -70,6 +71,10 @@ struct FactorioControlsView: View {
                     .font(.title2.bold())
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
+                Button("Save sync", action: onSaves)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .focusable(false)
                 Button("Back to game", action: onClose)
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)

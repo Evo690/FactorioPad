@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 final class FactorioPadApp: UIResponder, UIApplicationDelegate {
@@ -44,29 +45,122 @@ extension Notification.Name {
 }
 
 struct FactorioLaunchView: View {
+    private enum Stage { case setup, syncing, playing, stopped }
+
+    @State private var stage = Stage.setup
     @State private var showsControls = false
+    @State private var showsSaves = false
+    @State private var showsFolderPicker = false
+    @State private var status: String?
+    @State private var stoppedMessage = "Factorio stopped."
     @State private var message: String?
 
     var body: some View {
-        FactorioMetalView(inputEnabled: !showsControls && message == nil)
-        .accessibilityHidden(showsControls)
-        .ignoresSafeArea()
-        .persistentSystemOverlays(.hidden)
-        .statusBarHidden(true)
-        .defersSystemGestures(on: [.bottom, .trailing])
+        Group {
+            if stage == .playing {
+                FactorioMetalView(inputEnabled: !showsControls && !showsSaves && message == nil)
+                    .accessibilityHidden(showsControls || showsSaves)
+                    .ignoresSafeArea()
+                    .persistentSystemOverlays(.hidden)
+                    .statusBarHidden(true)
+                    .defersSystemGestures(on: [.bottom, .trailing])
+                    .overlay {
+                        if showsControls {
+                            FactorioControlsView(onClose: { showsControls = false }, onSaves: {
+                                showsControls = false
+                                showsSaves = true
+                            })
+                        }
+                    }
+            } else {
+                VStack(spacing: 20) {
+                    Text("FactorioPad").font(.largeTitle.bold())
+                    if stage == .syncing {
+                        ProgressView("Syncing saves…")
+                    } else if stage == .stopped {
+                        Text(status ?? "Factorio stopped.")
+                            .multilineTextAlignment(.center)
+                        if FactorioSaveSync.hasFolder {
+                            Button("Retry save sync") { Task { await syncAfterPlay() } }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        Button("Choose save folder") { showsFolderPicker = true }
+                    } else {
+                        Text("Choose a folder in iCloud Drive to share saves with Factorio on your Mac.")
+                            .multilineTextAlignment(.center)
+                        if let status { Text(status).foregroundStyle(.secondary) }
+                        Button("Choose save folder") { showsFolderPicker = true }
+                            .buttonStyle(.borderedProminent)
+                        Button("Play without sync") { stage = .playing }
+                    }
+                }
+                .padding(32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(white: 0.06))
+                .preferredColorScheme(.dark)
+            }
+        }
+        .task {
+            if FactorioSaveSync.hasFolder { await syncBeforePlay() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .factorioControlsRequested)) { _ in
             showsControls = true
         }
-        .overlay {
-            if showsControls {
-                FactorioControlsView(onClose: { showsControls = false })
+        .sheet(isPresented: $showsSaves) {
+            VStack(spacing: 20) {
+                Text("Save sync").font(.title2.bold())
+                Text("Saves sync before the game starts and after you quit Factorio from its menu. You can change the folder after the game stops.")
+                    .multilineTextAlignment(.center)
+                if let status { Text(status).font(.footnote).multilineTextAlignment(.center) }
+                Button("Back to game") { showsSaves = false }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(32)
+            .presentationDetents([.medium])
+        }
+        .fileImporter(isPresented: $showsFolderPicker, allowedContentTypes: [.folder]) { result in
+            do {
+                let folder = try result.get()
+                try FactorioSaveSync.saveFolder(folder)
+                if stage == .setup {
+                    Task { await syncBeforePlay() }
+                } else if stage == .stopped {
+                    Task { await syncAfterPlay() }
+                }
+            } catch {
+                if (error as NSError).code != NSUserCancelledError { message = error.localizedDescription }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .factorioStopped)) { notification in
-            message = notification.userInfo?["message"] as? String
+            stoppedMessage = notification.userInfo?["message"] as? String ?? "Factorio stopped."
+            Task { await syncAfterPlay() }
         }
         .alert("Factorio", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK") { message = nil }
         } message: { Text(message ?? "") }
+    }
+
+    private func syncBeforePlay() async {
+        guard stage == .setup else { return }
+        stage = .syncing
+        do {
+            try await Task.detached(priority: .userInitiated) { try FactorioSaveSync.synchronize() }.value
+            stage = .playing
+        } catch {
+            status = "Save sync failed: \(error.localizedDescription)"
+            stage = .setup
+        }
+    }
+
+    private func syncAfterPlay() async {
+        guard stage == .playing || stage == .stopped else { return }
+        stage = .syncing
+        do {
+            try await Task.detached(priority: .userInitiated) { try FactorioSaveSync.synchronize() }.value
+            status = FactorioSaveSync.hasFolder ? "Saves synced. \(stoppedMessage)" : stoppedMessage
+        } catch {
+            status = "Save sync failed: \(error.localizedDescription) \(stoppedMessage)"
+        }
+        stage = .stopped
     }
 }

@@ -48,6 +48,18 @@ With a free Apple Account, refresh the installed app within seven days. You do n
 > [!NOTE]
 > Keep the IPA private because it contains your copy of Factorio. The [MIT license](LICENSE) covers only the FactorioPad source code.
 
+### Sync saves across Apple devices
+
+In the FactorioPad project folder, run this command once:
+
+```sh
+bash Tools/link_macos_saves.sh
+```
+
+The script copies your Mac saves to `iCloud Drive/FactorioPad Saves`. It links Factorio's save folder to that location. It keeps the original folder as `saves.before-factoriopad`. If the iCloud folder already contains saves, the script stops. Merge those saves before you run it again.
+
+When FactorioPad first opens on an iPhone or iPad, choose `iCloud Drive/FactorioPad Saves` in Files. FactorioPad syncs saves with that folder before the game starts and after it quits.
+
 ## Run from Xcode
 
 1. Open Terminal in the FactorioPad project folder.
