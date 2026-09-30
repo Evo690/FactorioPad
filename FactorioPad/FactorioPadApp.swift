@@ -109,7 +109,7 @@ struct FactorioLaunchView: View {
         .sheet(isPresented: $showsSaves) {
             VStack(spacing: 20) {
                 Text("Save sync").font(.title2.bold())
-                Text("Saves sync before the game starts and after you quit Factorio from its menu. You can change the folder after the game stops.")
+                Text("FactorioPad syncs saves when you open it, before the game starts.")
                     .multilineTextAlignment(.center)
                 if let status { Text(status).font(.footnote).multilineTextAlignment(.center) }
                 Button("Back to game") { showsSaves = false }

@@ -58,7 +58,7 @@ bash Tools/link_macos_saves.sh
 
 The script copies your Mac saves to `iCloud Drive/FactorioPad Saves`. It links Factorio's save folder to that location. It keeps the original folder as `saves.before-factoriopad`. If the iCloud folder already contains saves, the script stops. Merge those saves before you run it again.
 
-When FactorioPad first opens on an iPhone or iPad, choose `iCloud Drive/FactorioPad Saves` in Files. FactorioPad syncs saves with that folder before the game starts and after it quits.
+When FactorioPad first opens on an iPhone or iPad, choose `iCloud Drive/FactorioPad Saves` in Files. FactorioPad syncs saves with that folder before the game starts.
 
 ## Run from Xcode
 
