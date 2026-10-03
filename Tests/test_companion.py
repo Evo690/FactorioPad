@@ -14,6 +14,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import zipfile
 
+# PyInstaller probes the Linux runtime with subprocess.run during import.
+# Load it before the release test replaces subprocess.run with a fake compiler.
+import PyInstaller
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'Tools'))
 import build_companion
 import companion
@@ -154,7 +158,9 @@ def main():
         with patch('build_companion.sys', SimpleNamespace(platform='linux')):
             native_write(linux_app, linux_release)
         with tarfile.open(linux_release) as archive:
-            assert archive.getmember('Linux app/FactorioPad Companion').mode & 0o111
+            assert archive.extractfile('Linux app/FactorioPad Companion').read() == b'program'
+            if sys.platform != 'win32':
+                assert archive.getmember('Linux app/FactorioPad Companion').mode == 0o755
     print('Shared companion checks passed.')
 
 
