@@ -628,11 +628,42 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
     FactorioLog(@"Sprite mask textures: uncompressed R8/RG8");
     FactorioLog([NSString stringWithFormat:@"GPU: %@; BC texture compression: %@",
         device.name ?: @"unavailable", compressedTextures ? @"supported" : @"unsupported"]);
-    if (!compressedTextures) {
-        config = FactorioApplyConfigSection(config, @"[graphics]",
-            @[@"texture-compression-level=none"], YES, YES);
-        FactorioLog(@"Disabled texture compression for this GPU");
+    NSString *userQuality = [[NSUserDefaults standardUserDefaults] stringForKey:@"FactorioGraphicsQuality"];
+    if (!userQuality || userQuality.length == 0) {
+        userQuality = compressedTextures ? @"high" : @"normal";
     }
+
+    NSMutableArray<NSString *> *graphicsSettings = [NSMutableArray array];
+    if (!compressedTextures) {
+        [graphicsSettings addObject:@"texture-compression-level=none"];
+    }
+
+    if ([userQuality isEqualToString:@"low"]) {
+        [graphicsSettings addObjectsFromArray:@[
+            @"graphics-quality=low",
+            @"high-quality-animations=false",
+            @"max-texture-size=4096",
+            @"video-memory-usage=low"
+        ]];
+    } else if ([userQuality isEqualToString:@"high"]) {
+        [graphicsSettings addObjectsFromArray:@[
+            @"graphics-quality=high",
+            @"high-quality-animations=true",
+            @"max-texture-size=0",
+            @"video-memory-usage=all"
+        ]];
+    } else { // normal
+        [graphicsSettings addObjectsFromArray:@[
+            @"graphics-quality=normal",
+            @"high-quality-animations=false",
+            @"max-texture-size=4096",
+            @"video-memory-usage=medium"
+        ]];
+    }
+
+    config = FactorioApplyConfigSection(config, @"[graphics]", graphicsSettings, YES, YES);
+    FactorioLog([NSString stringWithFormat:@"Applied graphics quality '%@' (compression: %@)",
+        userQuality, compressedTextures ? @"high-quality" : @"none"]);
 
     if (![config writeToFile:configPath
                   atomically:YES
