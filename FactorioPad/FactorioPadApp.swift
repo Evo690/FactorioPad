@@ -50,6 +50,7 @@ extension Notification.Name {
 struct FactorioLaunchView: View {
     private enum Stage { case gameSetup, openingGame, setup, syncing, playing, stopped }
 
+    @AppStorage("FactorioGraphicsQuality") private var graphicsQuality = "normal"
     @State private var stage = Stage.openingGame
     @State private var importProgress = 0.0
     @State private var showsControls = false
@@ -103,6 +104,7 @@ struct FactorioLaunchView: View {
                                 .buttonStyle(.borderedProminent)
                         }
                         Button("Choose save folder") { selectsGameFolder = false; showsFolderPicker = true }
+                        Button("Play without sync") { stage = .playing }
                     } else {
                         Text("Choose a folder in iCloud Drive to share saves with Factorio on your computer.")
                             .multilineTextAlignment(.center)
@@ -114,6 +116,33 @@ struct FactorioLaunchView: View {
                         } else {
                             Button("Play without sync") { stage = .playing }
                         }
+                    }
+                    if stage == .setup || stage == .stopped {
+                        VStack(spacing: 6) {
+                            Text("Graphics Quality").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                            Picker("Graphics Quality", selection: $graphicsQuality) {
+                                Text("Low").tag("low")
+                                Text("Normal").tag("normal")
+                                Text("High").tag("high")
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 280)
+                            if graphicsQuality == "high" {
+                                Text("High quality requires 8 GB+ RAM and may crash on iPhones.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                    .multilineTextAlignment(.center)
+                            } else if graphicsQuality == "normal" {
+                                Text("Recommended for iPhone play and Space Age.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Fastest loading and lowest memory usage.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
                     if let log = FactorioLoader.startupLogURL() {
                         ShareLink("Share log", item: log)
