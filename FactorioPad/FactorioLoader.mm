@@ -322,6 +322,98 @@ static NSString *FactorioUpdateConfigPaths(
     return [result componentsJoinedByString:@"\n"];
 }
 
+// Factorio 2.0 only accepts graphics-quality=high or graphics-quality=medium.
+// 1.1-style values ("low", "normal") are ignored, so the game keeps the GPU
+// auto-detected preset. Apple GPUs report 4096 MB of dedicated VRAM and that
+// preset is "high", which OOMs iPhones while building uncompressed atlases.
+static NSString *FactorioResolvedUserGraphicsQuality(void)
+{
+    NSString *storedQuality = [[NSUserDefaults standardUserDefaults] stringForKey:@"FactorioGraphicsQuality"];
+    if (!storedQuality.length) {
+        return @"normal";
+    }
+    if ([@[@"low", @"normal", @"high"] containsObject:storedQuality]) {
+        return storedQuality;
+    }
+    FactorioLog([NSString stringWithFormat:@"Unknown graphics quality '%@', falling back to normal", storedQuality]);
+    return @"normal";
+}
+
+static NSString *FactorioConfigGraphicsQuality(NSString *userQuality)
+{
+    return [userQuality isEqualToString:@"high"] ? @"high" : @"medium";
+}
+
+static NSString *FactorioGraphicsPresetName(NSString *userQuality)
+{
+    if ([userQuality isEqualToString:@"high"]) {
+        return @"high";
+    }
+    if ([userQuality isEqualToString:@"low"]) {
+        return @"very-low";
+    }
+    return @"mac-with-low-ram";
+}
+
+static NSString *FactorioVideoMemoryUsage(NSString *userQuality)
+{
+    if ([userQuality isEqualToString:@"high"]) {
+        return @"all";
+    }
+    if ([userQuality isEqualToString:@"low"]) {
+        return @"low";
+    }
+    return @"medium";
+}
+
+static NSString *FactorioMaxTextureSize(NSString *userQuality)
+{
+    return [userQuality isEqualToString:@"high"] ? @"0" : @"4096";
+}
+
+static NSArray<NSString *> *FactorioGraphicsSettingsForQuality(NSString *userQuality, BOOL compressedTextures)
+{
+    NSMutableArray<NSString *> *settings = [NSMutableArray array];
+    if (!compressedTextures) {
+        [settings addObject:@"texture-compression-level=none"];
+    }
+    BOOL high = [userQuality isEqualToString:@"high"];
+    [settings addObject:[@"graphics-quality=" stringByAppendingString:FactorioConfigGraphicsQuality(userQuality)]];
+    [settings addObject:high ? @"high-quality-animations=true" : @"high-quality-animations=false"];
+    [settings addObject:[@"max-texture-size=" stringByAppendingString:FactorioMaxTextureSize(userQuality)]];
+    [settings addObject:[@"video-memory-usage=" stringByAppendingString:FactorioVideoMemoryUsage(userQuality)]];
+    [settings addObject:@"skip-vram-detection=true"];
+    return settings;
+}
+
+static NSArray<NSString *> *FactorioMainArguments(
+    NSString *configPath,
+    NSString *modsPath,
+    NSString *windowSizeArgument,
+    NSString *userQuality
+)
+{
+    NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithArray:@[
+        @"factorio",
+        @"--config", configPath ?: @"",
+        @"--mod-directory", modsPath ?: @"",
+        @"--no-log-rotation",
+        @"--force-metal",
+        @"--fullscreen=false",
+        @"--window-size", windowSizeArgument ?: @"",
+        @"--nogamepad",
+        @"--single-thread-loading",
+        @"--graphics-quality", FactorioConfigGraphicsQuality(userQuality),
+        @"--force-graphics-preset", FactorioGraphicsPresetName(userQuality),
+        @"--video-memory-usage", FactorioVideoMemoryUsage(userQuality),
+        @"--max-texture-size", FactorioMaxTextureSize(userQuality)
+    ]];
+    if (![userQuality isEqualToString:@"high"]) {
+        [arguments addObject:@"--low-vram"];
+    }
+    return arguments;
+}
+
 static NSString *FactorioApplyConfigSection(
     NSString *config,
     NSString *section,
@@ -763,50 +855,20 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
     FactorioLog([NSString stringWithFormat:@"GPU: %@; BC texture compression: %@",
         device.name ?: @"unavailable", compressedTextures ? @"supported" : @"unsupported"]);
     NSString *storedQuality = [[NSUserDefaults standardUserDefaults] stringForKey:@"FactorioGraphicsQuality"];
-    NSString *userQuality = storedQuality;
-    if (!userQuality || userQuality.length == 0) {
-        userQuality = @"normal";
-    } else if (![@[@"low", @"normal", @"high"] containsObject:userQuality]) {
-        FactorioLog([NSString stringWithFormat:@"Unknown graphics quality '%@', falling back to normal", userQuality]);
-        userQuality = @"normal";
-    }
-    FactorioLog([NSString stringWithFormat:@"TRACE: UserDefaults FactorioGraphicsQuality=%@; effective quality=%@",
-        storedQuality ?: @"<missing>", userQuality]);
+    NSString *userQuality = FactorioResolvedUserGraphicsQuality();
+    NSString *factorioQuality = FactorioConfigGraphicsQuality(userQuality);
+    FactorioLog([NSString stringWithFormat:@"TRACE: UserDefaults FactorioGraphicsQuality=%@; effective quality=%@; Factorio graphics-quality=%@; preset=%@",
+        storedQuality ?: @"<missing>", userQuality, factorioQuality, FactorioGraphicsPresetName(userQuality)]);
 
-    NSMutableArray<NSString *> *graphicsSettings = [NSMutableArray array];
-    if (!compressedTextures) {
-        [graphicsSettings addObject:@"texture-compression-level=none"];
-    }
-
-    if ([userQuality isEqualToString:@"low"]) {
-        [graphicsSettings addObjectsFromArray:@[
-            @"graphics-quality=low",
-            @"high-quality-animations=false",
-            @"max-texture-size=4096",
-            @"video-memory-usage=low"
-        ]];
-    } else if ([userQuality isEqualToString:@"high"]) {
-        [graphicsSettings addObjectsFromArray:@[
-            @"graphics-quality=high",
-            @"high-quality-animations=true",
-            @"max-texture-size=0",
-            @"video-memory-usage=all"
-        ]];
-    } else { // normal
-        [graphicsSettings addObjectsFromArray:@[
-            @"graphics-quality=normal",
-            @"high-quality-animations=false",
-            @"max-texture-size=4096",
-            @"video-memory-usage=medium"
-        ]];
-    }
+    NSArray<NSString *> *graphicsSettings = FactorioGraphicsSettingsForQuality(userQuality, compressedTextures);
 
     NSString *originalGraphics = [config copy];
     FactorioLog([NSString stringWithFormat:@"TRACE: Original [graphics] before apply:\n%@",
         FactorioConfigSectionDump(originalGraphics, @"[graphics]")]);
     config = FactorioApplyConfigSection(config, @"[graphics]", graphicsSettings, YES, YES);
-    NSString *qualityBinding = [@"graphics-quality=" stringByAppendingString:userQuality];
-    FactorioLog([NSString stringWithFormat:@"Applied graphics quality '%@' to %@", userQuality, configPath]);
+    NSString *qualityBinding = [@"graphics-quality=" stringByAppendingString:factorioQuality];
+    FactorioLog([NSString stringWithFormat:@"Applied app graphics quality '%@' as Factorio graphics-quality=%@ (preset %@) to %@",
+        userQuality, factorioQuality, FactorioGraphicsPresetName(userQuality), configPath]);
     FactorioLog([NSString stringWithFormat:@"Graphics settings: %@; texture compression: %@",
         [graphicsSettings componentsJoinedByString:@", "], compressedTextures ? @"high-quality" : @"none"]);
 
@@ -1043,18 +1105,8 @@ static void *FactorioOpenFramework(NSString *name, int flags)
     CGFloat height = MAX(windowSize.height, 1.0);
     NSString *windowSizeArgument = [NSString stringWithFormat:@"%ldx%ld",
         lround(width), lround(height)];
-
-    NSArray<NSString *> *arguments = @[
-        @"factorio",
-        @"--config", configPath,
-        @"--mod-directory", modsPath,
-        @"--no-log-rotation",
-        @"--force-metal",
-        @"--fullscreen=false",
-        @"--window-size", windowSizeArgument,
-        @"--nogamepad",
-        @"--single-thread-loading"
-    ];
+    NSString *userQuality = FactorioResolvedUserGraphicsQuality();
+    NSArray<NSString *> *arguments = FactorioMainArguments(configPath, modsPath, windowSizeArgument, userQuality);
 
     NSThread *thread = [[NSThread alloc] initWithBlock:^{
         @autoreleasepool {
@@ -1064,8 +1116,8 @@ static void *FactorioOpenFramework(NSString *name, int flags)
                 FactorioReportError(@"Factorio cannot open its game folder.");
                 return;
             }
-            FactorioLog([NSString stringWithFormat:@"TRACE: Calling Factorio main with --config %@; working directory %@",
-                configPath, readDataPath]);
+            FactorioLog([NSString stringWithFormat:@"TRACE: Calling Factorio main with %@; working directory %@",
+                [arguments componentsJoinedByString:@" "], readDataPath]);
 
             int argumentCount = (int)arguments.count;
             char **argumentValues = (char **)calloc((size_t)argumentCount + 1, sizeof(char *));

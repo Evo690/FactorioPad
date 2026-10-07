@@ -202,7 +202,7 @@ struct FactorioLaunchView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Fastest loading and lowest memory usage.")
+                Text("Lowest memory. Use this on iPhones; Space Age needs it on 6 GB devices.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

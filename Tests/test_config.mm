@@ -43,15 +43,47 @@ int main(void)
         NSString *customGraphics = @"[graphics]\nhigh-quality-animations=false\ntexture-compression-level=none\n";
         NSCAssert([FactorioUpdateConfigPaths(customGraphics, @"/new/read", @"/new/write") hasPrefix:customGraphics],
             @"saved graphics preferences must not be replaced by new defaults");
+        NSCAssert([FactorioConfigGraphicsQuality(@"low") isEqualToString:@"medium"] &&
+            [FactorioConfigGraphicsQuality(@"normal") isEqualToString:@"medium"] &&
+            [FactorioConfigGraphicsQuality(@"high") isEqualToString:@"high"],
+            @"Factorio 2.0 only accepts graphics-quality=medium or high");
+        NSCAssert([FactorioGraphicsPresetName(@"low") isEqualToString:@"very-low"] &&
+            [FactorioGraphicsPresetName(@"normal") isEqualToString:@"mac-with-low-ram"] &&
+            [FactorioGraphicsPresetName(@"high") isEqualToString:@"high"],
+            @"Apple GPUs must not keep the auto-detected high graphics preset");
         NSString *lowPreset = FactorioApplyConfigSection(@"[graphics]\ngraphics-quality=high\nhigh-quality-animations=true\n",
-            @"[graphics]", @[@"graphics-quality=low", @"high-quality-animations=false",
-                @"max-texture-size=4096", @"video-memory-usage=low"], YES, YES);
-        NSCAssert(FactorioConfigSectionContainsBinding(lowPreset, @"[graphics]", @"graphics-quality=low") &&
+            @"[graphics]", FactorioGraphicsSettingsForQuality(@"low", YES), YES, YES);
+        NSCAssert(FactorioConfigSectionContainsBinding(lowPreset, @"[graphics]", @"graphics-quality=medium") &&
             ![lowPreset containsString:@"graphics-quality=high"] &&
+            ![lowPreset containsString:@"graphics-quality=low"] &&
             [lowPreset containsString:@"high-quality-animations=false"] &&
             [lowPreset containsString:@"max-texture-size=4096"] &&
-            [lowPreset containsString:@"video-memory-usage=low"],
-            @"selecting low must replace stale graphics settings with the full low preset");
+            [lowPreset containsString:@"video-memory-usage=low"] &&
+            [lowPreset containsString:@"skip-vram-detection=true"],
+            @"selecting low must replace stale graphics settings with Factorio 2.0 medium sprites");
+        NSString *normalPreset = FactorioApplyConfigSection(@"[graphics]\ngraphics-quality=low\n",
+            @"[graphics]", FactorioGraphicsSettingsForQuality(@"normal", NO), YES, YES);
+        NSCAssert(FactorioConfigSectionContainsBinding(normalPreset, @"[graphics]", @"graphics-quality=medium") &&
+            ![normalPreset containsString:@"graphics-quality=low"] &&
+            ![normalPreset containsString:@"graphics-quality=normal"] &&
+            [normalPreset containsString:@"texture-compression-level=none"] &&
+            [normalPreset containsString:@"video-memory-usage=medium"],
+            @"selecting normal must not write Factorio 2.0-invalid graphics-quality=normal");
+        NSArray<NSString *> *lowLaunch = FactorioMainArguments(@"/config.ini", @"/mods", @"844x390", @"low");
+        NSUInteger lowQualityIndex = [lowLaunch indexOfObject:@"--graphics-quality"];
+        NSUInteger lowPresetIndex = [lowLaunch indexOfObject:@"--force-graphics-preset"];
+        NSUInteger lowVramIndex = [lowLaunch indexOfObject:@"--video-memory-usage"];
+        NSCAssert(lowQualityIndex != NSNotFound && [lowLaunch[lowQualityIndex + 1] isEqualToString:@"medium"] &&
+            lowPresetIndex != NSNotFound && [lowLaunch[lowPresetIndex + 1] isEqualToString:@"very-low"] &&
+            lowVramIndex != NSNotFound && [lowLaunch[lowVramIndex + 1] isEqualToString:@"low"] &&
+            [lowLaunch containsObject:@"--low-vram"] &&
+            [[lowLaunch componentsJoinedByString:@" "] containsString:@"--window-size 844x390"],
+            @"low must launch Factorio with medium sprites and the very-low preset");
+        NSArray<NSString *> *highLaunch = FactorioMainArguments(@"/config.ini", @"/mods", @"1024x768", @"high");
+        NSUInteger highQualityIndex = [highLaunch indexOfObject:@"--graphics-quality"];
+        NSCAssert(highQualityIndex != NSNotFound && [highLaunch[highQualityIndex + 1] isEqualToString:@"high"] &&
+            ![highLaunch containsObject:@"--low-vram"],
+            @"high must keep Factorio graphics-quality=high");
         NSString *duplicateGraphics = @"[graphics]\n graphics-quality = high \ncustom=keep\n[graphics]\n[interface]\ncustom-ui-scale=1.25\n";
         NSCAssert(!FactorioConfigSectionContainsBinding(duplicateGraphics, @"[graphics]", @"graphics-quality=low"),
             @"verification must reject a stale value or a missing value in a duplicate graphics section");

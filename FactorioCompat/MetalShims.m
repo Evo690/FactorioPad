@@ -630,9 +630,16 @@ static void FPSanitizeConfigIfNeeded(NSString *configPath)
     }
 
     BOOL modified = NO;
-    if ([content containsString:@"graphics-quality=high"]) {
-        content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=high"
-                                                     withString:@"graphics-quality=normal"];
+    // Factorio 2.0 only accepts high or medium. Stale FactorioPad configs wrote
+    // low/normal, which the game ignores and then keeps the GPU high preset.
+    if ([content containsString:@"graphics-quality=low"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=low"
+                                                     withString:@"graphics-quality=medium"];
+        modified = YES;
+    }
+    if ([content containsString:@"graphics-quality=normal"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=normal"
+                                                     withString:@"graphics-quality=medium"];
         modified = YES;
     }
     if ([content containsString:@"high-quality-animations=true"]) {
