@@ -195,7 +195,10 @@ static inline BOOL FactorioGraphicsQualityFromLogBytes(
         while (end < length && bytes[end] != ']' && bytes[end] != ' ' && bytes[end] != '\n' && end - start < capacity - 1) {
             end++;
         }
-        if (end == start) {
+        // A value without its closing delimiter is still being written, so the
+        // next read has to supply the rest of the line instead of reporting a
+        // truncated resolution.
+        if (end == start || end == length) {
             continue;
         }
         reported = bytes + start;

@@ -176,6 +176,10 @@ int main(void)
             FactorioGraphicsQualityFromLogBytes(splitReport, strlen(splitReport), reported, sizeof(reported)) &&
             strcmp(reported, "medium") == 0,
             @"a report that straddles two reads must still be found once the whole line arrives");
+        const char *truncatedReport = "0.259 Graphics options: [Graphics quality: med";
+        NSCAssert(!FactorioGraphicsQualityFromLogBytes(truncatedReport, strlen(truncatedReport),
+            reported, sizeof(reported)),
+            @"a report cut off before its closing bracket must wait for the rest of the line");
         NSCAssert(!FactorioGraphicsQualityFromLogBytes("Loading sounds...\n", 18, reported, sizeof(reported)),
             @"output without a resolution report must not invent one");
         NSString *duplicateGraphics = @"[graphics]\n graphics-quality = high \ncustom=keep\n[graphics]\n[interface]\ncustom-ui-scale=1.25\n";
