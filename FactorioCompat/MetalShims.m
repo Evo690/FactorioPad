@@ -599,6 +599,56 @@ static void FPSwizzleMetalDevice(void)
     });
 }
 
+static void FPSanitizeConfigIfNeeded(void)
+{
+    NSArray *paths = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask];
+    if (!paths.count) return;
+    NSURL *docsURL = paths.firstObject;
+    NSString *configPath = [docsURL.path stringByAppendingPathComponent:@"config/config.ini"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if (![fm fileExistsAtPath:configPath]) return;
+
+    NSError *err = nil;
+    NSString *content = [NSString stringWithContentsOfFile:configPath encoding:NSUTF8StringEncoding error:&err];
+    if (!content) return;
+
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    BOOL bcSupported = device && device.supportsBCTextureCompression;
+
+    if (!bcSupported) {
+        BOOL modified = NO;
+        if ([content containsString:@"graphics-quality=high"]) {
+            content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=high"
+                                                         withString:@"graphics-quality=normal"];
+            modified = YES;
+        }
+        if ([content containsString:@"high-quality-animations=true"]) {
+            content = [content stringByReplacingOccurrencesOfString:@"high-quality-animations=true"
+                                                         withString:@"high-quality-animations=false"];
+            modified = YES;
+        }
+        if ([content containsString:@"max-texture-size=0"]) {
+            content = [content stringByReplacingOccurrencesOfString:@"max-texture-size=0"
+                                                         withString:@"max-texture-size=4096"];
+            modified = YES;
+        }
+        if ([content containsString:@"video-memory-usage=all"]) {
+            content = [content stringByReplacingOccurrencesOfString:@"video-memory-usage=all"
+                                                         withString:@"video-memory-usage=medium"];
+            modified = YES;
+        }
+        if ([content containsString:@"texture-compression-level=high-quality"]) {
+            content = [content stringByReplacingOccurrencesOfString:@"texture-compression-level=high-quality"
+                                                         withString:@"texture-compression-level=none"];
+            modified = YES;
+        }
+        if (modified) {
+            [content writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            NSLog(@"[FactorioCompat] Sanitized config.ini for mobile GPU to prevent texture atlas crash.");
+        }
+    }
+}
+
 @interface FactorioMetalShims : NSObject
 @end
 
@@ -607,6 +657,7 @@ static void FPSwizzleMetalDevice(void)
 + (void)load
 {
     FPSwizzleMetalDevice();
+    FPSanitizeConfigIfNeeded();
 }
 
 @end
