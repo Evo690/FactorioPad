@@ -117,7 +117,7 @@ struct FactorioLaunchView: View {
                             Button("Play without sync") { stage = .playing }
                         }
                     }
-                    if stage == .setup || stage == .stopped {
+                    if stage != .playing {
                         VStack(spacing: 6) {
                             Text("Graphics Quality").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                             Picker("Graphics Quality", selection: $graphicsQuality) {
