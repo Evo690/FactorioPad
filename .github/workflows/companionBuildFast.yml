@@ -8,17 +8,25 @@ permissions:
 
 jobs:
   prepare-template:
-    runs-on: macos-14
+    # FactorioPad only compiles with Xcode 26 or newer: FactorioSaveSync.swift uses
+    # 'nonisolated' on an enum (Swift 6.1+), and the app target relies on Xcode 26
+    # concurrency settings. macos-14 tops out at Xcode 16.2, which fails to compile it.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode 16
+      - name: Select Xcode 26
         run: |
-          XCODE_APP=$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' 2>/dev/null | sort -V | tail -n 1)
-          if [ -n "$XCODE_APP" ]; then
-            echo "Switching to $XCODE_APP"
-            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          set -euo pipefail
+          XCODE_APP=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            echo "ERROR: Xcode 26 is required to build FactorioPad, but it is not installed."
+            find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V
+            exit 1
           fi
+          echo "Switching to $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
           xcodebuild -version
+          xcrun swift --version
       - name: Download base template IPA
         env:
           GH_TOKEN: ${{ github.token }}
