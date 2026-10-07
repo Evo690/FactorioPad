@@ -11,6 +11,14 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 16
+        run: |
+          XCODE_APP=$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$XCODE_APP" ]; then
+            echo "Switching to $XCODE_APP"
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          fi
+          xcodebuild -version
       - name: Build FactorioCompat framework
         run: |
           xcodebuild -project FactorioPad.xcodeproj -scheme FactorioCompat \
@@ -26,9 +34,11 @@ jobs:
         shell: bash
       - name: Inject updated FactorioCompat framework into template IPA
         run: |
+          COMPAT_FW=$(find build/DerivedData -name "FactorioCompat.framework" -type d | head -n 1)
+          echo "Found FactorioCompat framework at $COMPAT_FW"
           python3 Tools/inject_compat.py \
             build-input/FactorioPad-template.ipa \
-            build/DerivedData/Build/Products/Release-iphoneos/FactorioCompat.framework \
+            "$COMPAT_FW" \
             build-input/FactorioPad-template.ipa
       - uses: actions/upload-artifact@v4
         with:
