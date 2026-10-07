@@ -630,7 +630,10 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         device.name ?: @"unavailable", compressedTextures ? @"supported" : @"unsupported"]);
     NSString *userQuality = [[NSUserDefaults standardUserDefaults] stringForKey:@"FactorioGraphicsQuality"];
     if (!userQuality || userQuality.length == 0) {
-        userQuality = compressedTextures ? @"high" : @"normal";
+        userQuality = @"normal";
+    } else if (![@[@"low", @"normal", @"high"] containsObject:userQuality]) {
+        FactorioLog([NSString stringWithFormat:@"Unknown graphics quality '%@', falling back to normal", userQuality]);
+        userQuality = @"normal";
     }
 
     NSMutableArray<NSString *> *graphicsSettings = [NSMutableArray array];

@@ -1,17 +1,17 @@
 import CryptoKit
 import Foundation
 
-nonisolated enum FactorioSaveSync {
-    private static let bookmarkKey = "FactorioSaveFolderBookmark"
+enum FactorioSaveSync {
+    private nonisolated static var bookmarkKey: String { "FactorioSaveFolderBookmark" }
 
     private struct SyncState: Codable {
         var folder: String
         var hashes: [String: String]
     }
 
-    static var hasFolder: Bool { UserDefaults.standard.data(forKey: bookmarkKey) != nil }
+    nonisolated static var hasFolder: Bool { UserDefaults.standard.data(forKey: bookmarkKey) != nil }
 
-    static func saveFolder(_ url: URL) throws {
+    nonisolated static func saveFolder(_ url: URL) throws {
         guard url.startAccessingSecurityScopedResource() else {
             throw SyncError.folderAccess
         }
@@ -21,7 +21,7 @@ nonisolated enum FactorioSaveSync {
         UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
     }
 
-    static func synchronize() throws {
+    nonisolated static func synchronize() throws {
         guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else { return }
         var stale = false
         let shared = try URL(resolvingBookmarkData: bookmark, options: [],
@@ -38,7 +38,7 @@ nonisolated enum FactorioSaveSync {
         try synchronize(local: local, shared: shared)
     }
 
-    static func synchronize(local: URL, shared: URL) throws {
+    nonisolated static func synchronize(local: URL, shared: URL) throws {
         let manager = FileManager.default
         try manager.createDirectory(at: local, withIntermediateDirectories: true)
         guard local.standardizedFileURL != shared.standardizedFileURL else { return }
@@ -109,7 +109,7 @@ nonisolated enum FactorioSaveSync {
         }
     }
 
-    private static func files(in folder: URL) throws -> [String: URL] {
+    private nonisolated static func files(in folder: URL) throws -> [String: URL] {
         let urls = try FileManager.default.contentsOfDirectory(at: folder,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
         return try Dictionary(uniqueKeysWithValues: urls.compactMap { url in
@@ -120,7 +120,7 @@ nonisolated enum FactorioSaveSync {
         })
     }
 
-    private static func fingerprint(_ file: URL) throws -> (String, Date) {
+    private nonisolated static func fingerprint(_ file: URL) throws -> (String, Date) {
         var coordinationError: NSError?
         var hash = ""
         var date = Date.distantPast
@@ -142,7 +142,7 @@ nonisolated enum FactorioSaveSync {
         return (hash, date)
     }
 
-    private static func copy(_ source: URL, to destination: URL) throws {
+    private nonisolated static func copy(_ source: URL, to destination: URL) throws {
         var coordinationError: NSError?
         var copyError: Error?
         let exists = FileManager.default.fileExists(atPath: destination.path)
@@ -167,7 +167,7 @@ nonisolated enum FactorioSaveSync {
         if let copyError { throw copyError }
     }
 
-    private static func uniqueConflictName(for name: String, origin: String,
+    private nonisolated static func uniqueConflictName(for name: String, origin: String,
         local: URL, shared: URL) -> String {
         let stem = (name as NSString).deletingPathExtension
         let date = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
