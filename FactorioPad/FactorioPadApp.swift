@@ -1,3 +1,4 @@
+import Metal
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -176,6 +177,12 @@ struct FactorioLaunchView: View {
         } message: { Text(message ?? "") }
     }
 
+    private var allowsHighQuality: Bool {
+        let device = MTLCreateSystemDefaultDevice()
+        return FactorioGraphicsAllowsHighQuality(ProcessInfo.processInfo.physicalMemory,
+            device?.supportsBCTextureCompression ?? false)
+    }
+
     @ViewBuilder
     private var graphicsQualityPicker: some View {
         VStack(spacing: 6) {
@@ -193,16 +200,27 @@ struct FactorioLaunchView: View {
                 FactorioLoader.logMessage("Graphics quality selected: \(newValue)")
             }
             if graphicsQuality == "high" {
-                Text("High quality requires 8 GB+ RAM and may crash on iPhones.")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
+                // Factorio only accepts high when the GPU can compress textures
+                // and the device can hold the uncompressed atlases, which is the
+                // same rule FactorioLoader applies before the game starts.
+                let highQualityMemory = FactorioGraphicsHighQualityMemory() / (1024 * 1024 * 1024)
+                if allowsHighQuality {
+                    Text("Uses Factorio's 2× sprites and about 5 GB of memory.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("Needs \(highQualityMemory) GB of memory, so this device runs Normal.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                }
             } else if graphicsQuality == "normal" {
                 Text("Recommended for iPhone play and Space Age.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Fastest loading and lowest memory usage.")
+                Text("Lowest memory usage. Extra terrain, shadow, and light effects are turned off.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

@@ -1,3 +1,5 @@
+#import "FactorioGraphicsQuality.h"
+
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <objc/runtime.h>
@@ -629,38 +631,30 @@ static void FPSanitizeConfigIfNeeded(NSString *configPath)
         return;
     }
 
-    BOOL modified = NO;
-    if ([content containsString:@"graphics-quality=high"]) {
-        content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=high"
-                                                     withString:@"graphics-quality=normal"];
-        modified = YES;
+    NSString *guestVersion = FactorioGraphicsGuestVersion();
+    BOOL allowsHighQuality = FactorioGraphicsAllowsHighQuality(
+        NSProcessInfo.processInfo.physicalMemory, bcSupported);
+    NSMutableArray<NSString *> *changes = [NSMutableArray array];
+
+    // Without BC compression the atlas bitmaps are uploaded unchanged, so the
+    // atlas size, the sprite streaming cache and the animation frames are what
+    // decide whether an iPhone survives loading.
+    content = FactorioGraphicsNormalizeQuality(content, guestVersion, allowsHighQuality, changes);
+    if (!allowsHighQuality) {
+        content = FactorioGraphicsSetActiveValue(content, @"high-quality-animations", @"false", changes);
+        content = FactorioGraphicsSetActiveValue(content, @"max-texture-size", @"4096", changes);
+        content = FactorioGraphicsSetActiveValue(content, @"video-memory-usage", @"medium", changes);
     }
-    if ([content containsString:@"high-quality-animations=true"]) {
-        content = [content stringByReplacingOccurrencesOfString:@"high-quality-animations=true"
-                                                     withString:@"high-quality-animations=false"];
-        modified = YES;
-    }
-    if ([content containsString:@"max-texture-size=0"]) {
-        content = [content stringByReplacingOccurrencesOfString:@"max-texture-size=0"
-                                                     withString:@"max-texture-size=4096"];
-        modified = YES;
-    }
-    if ([content containsString:@"video-memory-usage=all"]) {
-        content = [content stringByReplacingOccurrencesOfString:@"video-memory-usage=all"
-                                                     withString:@"video-memory-usage=medium"];
-        modified = YES;
-    }
-    if ([content containsString:@"texture-compression-level=high-quality"]) {
-        content = [content stringByReplacingOccurrencesOfString:@"texture-compression-level=high-quality"
-                                                     withString:@"texture-compression-level=none"];
-        modified = YES;
-    }
-    if (modified) {
+    content = FactorioGraphicsSetActiveValue(content, @"texture-compression-level", @"none", changes);
+
+    if (changes.count) {
+        NSLog(@"[FactorioCompat] Sanitized canonical config for mobile GPU (Factorio %@): %@",
+            guestVersion ?: @"unknown", [changes componentsJoinedByString:@", "]);
         NSError *writeError = nil;
         if (![content writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:&writeError]) {
             NSLog(@"[FactorioCompat] Cannot write sanitized config %@: %@", configPath, writeError.localizedDescription);
         } else {
-            NSLog(@"[FactorioCompat] Sanitized canonical config for mobile GPU: %@", configPath);
+            NSLog(@"[FactorioCompat] Sanitized canonical config %@", configPath);
         }
     } else {
         NSLog(@"[FactorioCompat] Canonical config already uses safe mobile-GPU settings.");

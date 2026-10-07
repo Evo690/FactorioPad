@@ -1,6 +1,7 @@
 #import "FactorioLoader.h"
 
 #import "FactorioControllerBridge.h"
+#import "FactorioGraphicsQuality.h"
 #import "FactorioKeyboardBridge.h"
 
 #import <Foundation/Foundation.h>
@@ -26,6 +27,9 @@ static dispatch_source_t FactorioLogTimer;
 static unsigned long long FactorioCopiedLogSize;
 static const off_t FactorioLogLimit = 4 * 1024 * 1024;
 static dispatch_semaphore_t FactorioLogWriterDone;
+// Written before the game starts and read while its output is copied, so the
+// log shows whether the requested sprite resolution is the one in use.
+static NSString *FactorioExpectedGraphicsQuality;
 
 static BOOL FactorioWriteLogBytes(int file, const void *bytes, size_t count)
 {
@@ -116,14 +120,48 @@ static BOOL FactorioStartLogging(NSString *dataPath, NSError **error)
         off_t capacity = MAX(MIN(FactorioLogLimit, size + 1024 * 1024) - (off_t)sizeof(marker), 0);
         BOOL recording = size < capacity;
         char buffer[8192];
+        // Factorio reports the sprite resolution it uses while it prepares the
+        // atlases, early enough to be recorded even when the game is killed
+        // while the atlases are built. The carry keeps a report that straddles
+        // two reads recognizable; the marker is 19 bytes long.
+        char scan[sizeof(buffer) + 64];
+        size_t carried = 0;
+        NSString *lastVerdict = nil;
         for (;;) {
             ssize_t count = read(input, buffer, sizeof(buffer));
             if (count < 0 && errno == EINTR) { continue; }
             if (count <= 0) { break; }
             if (!recording) { continue; }
+            NSString *verdict = nil;
+            size_t copied = (size_t)MIN((size_t)count, sizeof(buffer));
+            memcpy(scan + carried, buffer, copied);
+            char quality[32];
+            if (FactorioGraphicsQualityFromLogBytes(scan, carried + copied, quality, sizeof(quality))) {
+                NSString *reportedQuality = [NSString stringWithUTF8String:quality] ?: @"unknown";
+                NSString *expected = FactorioExpectedGraphicsQuality;
+                if (!expected.length) {
+                    verdict = [NSString stringWithFormat:@"Factorio reports graphics quality '%@'.", reportedQuality];
+                } else if ([reportedQuality isEqualToString:expected]) {
+                    verdict = [NSString stringWithFormat:@"Confirmed Factorio uses graphics quality '%@'.", reportedQuality];
+                } else {
+                    verdict = [NSString stringWithFormat:
+                        @"WARNING: Factorio uses graphics quality '%@' but the app requested '%@'.",
+                        reportedQuality, expected];
+                }
+            }
+            size_t keep = MIN(carried + copied, (size_t)32);
+            memmove(scan, scan + carried + copied - keep, keep);
+            carried = keep;
             size_t kept = (size_t)MIN((off_t)count, capacity - size);
             recording = FactorioWriteLogBytes(log, buffer, kept);
             size += (off_t)kept;
+            if (verdict.length && ![verdict isEqualToString:lastVerdict]) {
+                lastVerdict = verdict;
+                // Write the verdict straight to the log file: going through
+                // stderr would send it back into the pipe being read here.
+                NSString *line = [NSString stringWithFormat:@"\n[FactorioPad] %@\n", verdict];
+                FactorioWriteLogBytes(log, line.UTF8String, [line lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
+            }
             if (recording && size >= capacity) {
                 FactorioWriteLogBytes(log, marker, sizeof(marker) - 1);
                 recording = NO;
@@ -257,6 +295,50 @@ static NSString *FactorioDefaultConfig(
          "button-layout=western\n",
         readDataPath,
         writeDataPath];
+}
+
+// The [graphics] bindings for the app's Low, Normal and High presets. Low and
+// Normal share Factorio's standard sprite resolution because 2.x only knows
+// `high` and `medium`; Low additionally drops the effects that keep their own
+// full resolution atlases (terrain, shadows, terrain effects and light
+// occlusion) and keeps sprites that are not atlased out of GPU memory.
+static NSArray<NSString *> *FactorioGraphicsSettings(NSString *quality, NSString *guestVersion)
+{
+    NSString *qualityBinding = [@"graphics-quality="
+        stringByAppendingString:FactorioGraphicsQualityValue(quality, guestVersion)];
+
+    if ([quality isEqualToString:@"high"]) {
+        return @[
+            qualityBinding,
+            @"high-quality-animations=true",
+            @"max-texture-size=0",
+            @"video-memory-usage=all"
+        ];
+    }
+    if ([quality isEqualToString:@"low"]) {
+        NSArray<NSString *> *low = @[
+            qualityBinding,
+            @"high-quality-animations=false",
+            @"max-texture-size=4096",
+            @"video-memory-usage=low"
+        ];
+        if (!FactorioGraphicsVersionUsesMediumQuality(guestVersion)) {
+            return low;
+        }
+        return [low arrayByAddingObjectsFromArray:@[
+            @"high-quality-shadows=false",
+            @"high-quality-terrain=false",
+            @"additional-terrain-effects=false",
+            @"light-occlusion=false",
+            @"optimize-for-low-vram=true"
+        ]];
+    }
+    return @[
+        qualityBinding,
+        @"high-quality-animations=false",
+        @"max-texture-size=4096",
+        @"video-memory-usage=medium"
+    ];
 }
 
 static NSString *FactorioUpdateConfigPaths(
@@ -702,7 +784,7 @@ static BOOL FactorioRestoreGameData(NSString *root, NSString *bundleRoot,
 }
 
 #ifndef FACTORIO_CONFIG_TEST
-static NSString *FactorioPrepareWritableData(NSString *readDataPath)
+static NSString *FactorioPrepareWritableData(NSString *readDataPath, NSString *guestVersion)
 {
 #if DEBUG
     FactorioCheckConfigUpdater();
@@ -770,43 +852,38 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         FactorioLog([NSString stringWithFormat:@"Unknown graphics quality '%@', falling back to normal", userQuality]);
         userQuality = @"normal";
     }
+    NSString *version = guestVersion.length ? guestVersion : @"unknown";
     FactorioLog([NSString stringWithFormat:@"TRACE: UserDefaults FactorioGraphicsQuality=%@; effective quality=%@",
         storedQuality ?: @"<missing>", userQuality]);
+
+    // Factorio can only lower the sprite resolution when the GPU handles the
+    // uncompressed atlases and the device holds them, so high quality has to
+    // fall back before the game starts instead of being killed while loading.
+    BOOL allowsHighQuality = FactorioGraphicsAllowsHighQuality(NSProcessInfo.processInfo.physicalMemory, compressedTextures);
+    if ([userQuality isEqualToString:@"high"] && !allowsHighQuality) {
+        FactorioLog([NSString stringWithFormat:
+            @"High quality needs %llu GB of memory or a GPU that compresses textures; using normal on this device",
+            FactorioGraphicsHighQualityMemory() / (1024ULL * 1024 * 1024)]);
+        userQuality = @"normal";
+    }
+    NSString *qualityValue = FactorioGraphicsQualityValue(userQuality, guestVersion);
+    FactorioLog([NSString stringWithFormat:@"Factorio %@ uses graphics-quality=%@ (accepted values: %@)",
+        version, qualityValue, FactorioGraphicsVersionUsesMediumQuality(guestVersion) ? @"high, medium" : @"high, normal"]);
 
     NSMutableArray<NSString *> *graphicsSettings = [NSMutableArray array];
     if (!compressedTextures) {
         [graphicsSettings addObject:@"texture-compression-level=none"];
     }
-
-    if ([userQuality isEqualToString:@"low"]) {
-        [graphicsSettings addObjectsFromArray:@[
-            @"graphics-quality=low",
-            @"high-quality-animations=false",
-            @"max-texture-size=4096",
-            @"video-memory-usage=low"
-        ]];
-    } else if ([userQuality isEqualToString:@"high"]) {
-        [graphicsSettings addObjectsFromArray:@[
-            @"graphics-quality=high",
-            @"high-quality-animations=true",
-            @"max-texture-size=0",
-            @"video-memory-usage=all"
-        ]];
-    } else { // normal
-        [graphicsSettings addObjectsFromArray:@[
-            @"graphics-quality=normal",
-            @"high-quality-animations=false",
-            @"max-texture-size=4096",
-            @"video-memory-usage=medium"
-        ]];
-    }
+    [graphicsSettings addObjectsFromArray:FactorioGraphicsSettings(userQuality, guestVersion)];
 
     NSString *originalGraphics = [config copy];
     FactorioLog([NSString stringWithFormat:@"TRACE: Original [graphics] before apply:\n%@",
         FactorioConfigSectionDump(originalGraphics, @"[graphics]")]);
     config = FactorioApplyConfigSection(config, @"[graphics]", graphicsSettings, YES, YES);
-    NSString *qualityBinding = [@"graphics-quality=" stringByAppendingString:userQuality];
-    FactorioLog([NSString stringWithFormat:@"Applied graphics quality '%@' to %@", userQuality, configPath]);
+    NSString *qualityBinding = [@"graphics-quality=" stringByAppendingString:qualityValue];
+    FactorioExpectedGraphicsQuality = qualityValue;
+    FactorioLog([NSString stringWithFormat:@"Applied graphics quality '%@' (%@) to %@",
+        userQuality, qualityBinding, configPath]);
     FactorioLog([NSString stringWithFormat:@"Graphics settings: %@; texture compression: %@",
         [graphicsSettings componentsJoinedByString:@", "], compressedTextures ? @"high-quality" : @"none"]);
 
@@ -875,9 +952,7 @@ static void *FactorioOpenFramework(NSString *name, int flags)
 
 + (NSString *)guestVersion
 {
-    NSString *path = [NSBundle.mainBundle.privateFrameworksPath
-        stringByAppendingPathComponent:@"FactorioGuest.framework/Info.plist"];
-    return [NSDictionary dictionaryWithContentsOfFile:path][@"CFBundleShortVersionString"];
+    return FactorioGraphicsGuestVersion();
 }
 
 + (NSURL *)startupLogURL
@@ -979,7 +1054,7 @@ static void *FactorioOpenFramework(NSString *name, int flags)
     FactorioLog([NSString stringWithFormat:@"Factorio %@; Viewport: %.0fx%.0f",
         guestVersion, windowSize.width, windowSize.height]);
     FactorioLog(@"Preparing game configuration");
-    NSString *configPath = FactorioPrepareWritableData(readDataPath);
+    NSString *configPath = FactorioPrepareWritableData(readDataPath, guestVersion);
     if (!configPath) {
         return;
     }
@@ -1011,6 +1086,13 @@ static void *FactorioOpenFramework(NSString *name, int flags)
     if (compatConfig) {
         FactorioLog([NSString stringWithFormat:@"TRACE: [graphics] after FactorioCompat:\n%@",
             FactorioConfigSectionDump(compatConfig, @"[graphics]")]);
+        NSString *qualityBinding = [@"graphics-quality=" stringByAppendingString:FactorioExpectedGraphicsQuality ?: @""];
+        if (FactorioExpectedGraphicsQuality.length &&
+            !FactorioConfigSectionContainsBinding(compatConfig, @"[graphics]", qualityBinding)) {
+            FactorioLog([NSString stringWithFormat:
+                @"WARNING: FactorioCompat removed %@; Factorio will use the preset it detected for this device.",
+                qualityBinding]);
+        }
     } else {
         FactorioLog([NSString stringWithFormat:@"WARNING: Cannot verify config after FactorioCompat: %@",
             compatConfigError.localizedDescription]);

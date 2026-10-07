@@ -31,6 +31,7 @@ Keep your generated IPA private because it contains your Factorio executable.
 - Physical keyboards and mice support typing, clicks, dragging, and scrolling.
 - Touch supports menu taps and drags.
 - New installations use a 150% interface scale and one visible quickbar.
+- `Graphics Quality` is written into Factorio's configuration before the game starts. Low and Normal use Factorio's standard sprites; Low also turns off the extra terrain, shadow, and light effects. High uses the 2× sprites and needs 12 GB of memory, so smaller devices play at Normal.
 - New freeplay games skip the opening cutscene and tutorial prompt.
 - Tap the keyboard button to type. Hold it to see the gamepad controls.
 - Full-screen play keeps a connected mouse pointer inside the game.

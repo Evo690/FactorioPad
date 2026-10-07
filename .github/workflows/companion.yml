@@ -51,6 +51,12 @@ jobs:
       - name: Test the shared companion on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a uv run --frozen python Tests/test_companion.py
+      - name: Test how the app writes Factorio's graphics settings
+        if: runner.os == 'macOS'
+        run: |
+          xcrun clang++ -fobjc-arc -fblocks -IFactorioCompat -framework Foundation -framework CoreGraphics \
+            Tests/test_config.mm -o "$RUNNER_TEMP/test-config"
+          "$RUNNER_TEMP/test-config"
       - name: Build the companion release
         if: runner.os != 'Linux'
         run: uv run --frozen python Tools/build_companion.py --template build-input/FactorioPad-template.ipa
