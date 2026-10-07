@@ -43,36 +43,31 @@ jobs:
           "
       - name: Build FactorioPad and FactorioCompat
         run: |
-          if xcodebuild -project FactorioPad.xcodeproj -scheme FactorioPad \
-              -configuration Release -destination 'generic/platform=iOS' \
-              -derivedDataPath build/DerivedData \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build; then
-            echo "Full FactorioPad build succeeded."
-          else
-            echo "FactorioPad scheme build failed; compiling FactorioCompat standalone..."
-            xcodebuild -project FactorioPad.xcodeproj -scheme FactorioCompat \
-              -configuration Release -destination 'generic/platform=iOS' \
-              -derivedDataPath build/DerivedData \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-          fi
+          xcodebuild -project FactorioPad.xcodeproj -scheme FactorioPad \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_INJECT_BASE_ENTITLEMENTS=NO build
+
       - name: Inject updated FactorioPad binary and FactorioCompat framework into template IPA
         run: |
           COMPAT_FW=$(find build/DerivedData -name "FactorioCompat.framework" -type d | head -n 1)
           APP_BIN=$(find build/DerivedData -path "*/FactorioPad.app/FactorioPad" -type f | head -n 1)
           echo "Found FactorioCompat framework at: $COMPAT_FW"
           echo "Found FactorioPad executable at: $APP_BIN"
-          if [ -n "$APP_BIN" ]; then
-            python3 Tools/inject_compat.py \
-              build-input/FactorioPad-template.ipa \
-              "$COMPAT_FW" \
-              build-input/FactorioPad-template.ipa \
-              "$APP_BIN"
-          else
-            python3 Tools/inject_compat.py \
-              build-input/FactorioPad-template.ipa \
-              "$COMPAT_FW" \
-              build-input/FactorioPad-template.ipa
+          if [ -z "$APP_BIN" ]; then
+            echo "ERROR: FactorioPad app binary was not built!"
+            exit 1
           fi
+          if [ -z "$COMPAT_FW" ]; then
+            echo "ERROR: FactorioCompat framework was not built!"
+            exit 1
+          fi
+          python3 Tools/inject_compat.py \
+            build-input/FactorioPad-template.ipa \
+            "$COMPAT_FW" \
+            build-input/FactorioPad-template.ipa \
+            "$APP_BIN"
       - uses: actions/upload-artifact@v4
         with:
           name: FactorioPad-template-ipa
