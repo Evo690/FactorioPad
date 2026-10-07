@@ -134,22 +134,25 @@ def make_template(ipa, output):
         staging.rename(output)
 
 
-def package(template, app, output):
+def package(template, app, output, include_data=True):
     if output.exists():
         raise ValueError("The output folder already exists. Choose a new path.")
     contents = app / "Contents"
     game_info = plistlib.loads((contents / "Info.plist").read_bytes())
-    version = game_info["CFBundleShortVersionString"]
+    version = game_info.get("CFBundleShortVersionString")
+    if not isinstance(version, str) or not version:
+        raise ValueError("The Mac Factorio version is missing from Info.plist.")
     data_root = contents / "data"
-    data_info = json.loads((data_root / "base/info.json").read_text(encoding="utf-8"))
-    if not isinstance(version, str) or not version or data_info.get("version") != version:
-        raise ValueError("The Mac executable and game data must use the same Factorio version.")
-    for required in ("core/info.json", "cacert.pem", "base/scenarios/freeplay/control.lua"):
-        if not (data_root / required).is_file():
-            raise ValueError(f"The Mac game data is incomplete: {required}")
-    # Refuse links so that copying cannot include files outside the installation.
-    if any(path.is_symlink() for path in data_root.rglob("*")):
-        raise ValueError("The game data must not contain symbolic links.")
+    if include_data:
+        data_info = json.loads((data_root / "base/info.json").read_text(encoding="utf-8"))
+        if data_info.get("version") != version:
+            raise ValueError("The Mac executable and game data must use the same Factorio version.")
+        for required in ("core/info.json", "cacert.pem", "base/scenarios/freeplay/control.lua"):
+            if not (data_root / required).is_file():
+                raise ValueError(f"The Mac game data is incomplete: {required}")
+        # Refuse links so that copying cannot include files outside the installation.
+        if any(path.is_symlink() for path in data_root.rglob("*")):
+            raise ValueError("The game data must not contain symbolic links.")
     executable = remove_signature(arm64_slice((contents / "MacOS/factorio").read_bytes()))
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent) as temporary:
@@ -159,9 +162,10 @@ def package(template, app, output):
         binary = work / "FactorioGuest"
         binary.write_bytes(executable)
         patch(binary)
-        shutil.copytree(data_root, result / "FactorioData", ignore=shutil.ignore_patterns(*PRIVATE_FILES))
-        shutil.copyfile(pathlib.Path(__file__).with_name("freeplay_control.lua"),
-                        result / "FactorioData/base/scenarios/freeplay/control.lua")
+        if include_data:
+            shutil.copytree(data_root, result / "FactorioData", ignore=shutil.ignore_patterns(*PRIVATE_FILES))
+            shutil.copyfile(pathlib.Path(__file__).with_name("freeplay_control.lua"),
+                            result / "FactorioData/base/scenarios/freeplay/control.lua")
         with zipfile.ZipFile(template) as source, zipfile.ZipFile(result / "FactorioPad.ipa", "w", zipfile.ZIP_DEFLATED) as target:
             prefix = app_prefix(source)
             marker = json.loads(source.read(prefix + MARKER))
@@ -187,7 +191,7 @@ def package(template, app, output):
         result.rename(output)
 
 
-def package_dmg(template, dmg, output, seven_zip, progress=print):
+def package_dmg(template, dmg, output, seven_zip, progress=print, include_data=True):
     if output.exists():
         raise ValueError("The output folder already exists. Choose a new folder.")
     if not dmg.is_file() or dmg.suffix.lower() != ".dmg":
@@ -195,10 +199,14 @@ def package_dmg(template, dmg, output, seven_zip, progress=print):
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent) as temporary:
         progress("Extracting the Factorio game files...")
+        extract_items = [
+            "Factorio/factorio.app/Contents/Info.plist",
+            "Factorio/factorio.app/Contents/MacOS/factorio",
+        ]
+        if include_data:
+            extract_items.append("Factorio/factorio.app/Contents/data/*")
         process = subprocess.run([str(seven_zip), "x", "-y", "-bd", "-bso0", "-bsp0", "-o" + temporary,
-                                  str(dmg.resolve()), "Factorio/factorio.app/Contents/Info.plist",
-                                  "Factorio/factorio.app/Contents/MacOS/factorio",
-                                  "Factorio/factorio.app/Contents/data/*"],
+                                  str(dmg.resolve())] + extract_items,
                                  capture_output=True, text=True, errors="replace",
                                  creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
         if process.returncode:
@@ -206,8 +214,8 @@ def package_dmg(template, dmg, output, seven_zip, progress=print):
         app = pathlib.Path(temporary) / "Factorio/factorio.app"
         if not (app / "Contents/Info.plist").is_file():
             raise ValueError("This DMG does not contain the Mac Factorio app.")
-        progress("Preparing your IPA and game data...")
-        package(template, app, output)
+        progress("Preparing your IPA..." if not include_data else "Preparing your IPA and game data...")
+        package(template, app, output, include_data=include_data)
 
 
 def main():
@@ -220,23 +228,28 @@ def main():
     personal.add_argument("template", type=pathlib.Path)
     personal.add_argument("factorio_app", type=pathlib.Path)
     personal.add_argument("output", type=pathlib.Path)
+    personal.add_argument("--ipa-only", action="store_true", help="Only build FactorioPad.ipa without copying game data.")
     dmg = commands.add_parser("dmg", help="Extract a Factorio DMG and prepare a personal IPA.")
     dmg.add_argument("template", type=pathlib.Path)
     dmg.add_argument("image", type=pathlib.Path)
     dmg.add_argument("output", type=pathlib.Path)
     dmg.add_argument("seven_zip", type=pathlib.Path)
+    dmg.add_argument("--ipa-only", action="store_true", help="Only build FactorioPad.ipa without copying game data.")
     args = parser.parse_args()
     try:
         if args.command == "template":
             make_template(args.ipa, args.output)
             print(f"Game-free template ready: {args.output}")
         elif args.command == "dmg":
-            package_dmg(args.template, args.image, args.output, args.seven_zip)
+            package_dmg(args.template, args.image, args.output, args.seven_zip, include_data=not args.ipa_only)
             print("Your app is ready.", flush=True)
         else:
-            package(args.template, args.factorio_app, args.output)
+            package(args.template, args.factorio_app, args.output, include_data=not args.ipa_only)
             print(f"Private unsigned IPA: {args.output / 'FactorioPad.ipa'}")
-            print(f"Sideload the IPA with a tool that signs embedded frameworks. Transfer {args.output / 'FactorioData'} to your device, then select it in FactorioPad.")
+            if not args.ipa_only:
+                print(f"Sideload the IPA with a tool that signs embedded frameworks. Transfer {args.output / 'FactorioData'} to your device, then select it in FactorioPad.")
+            else:
+                print("Sideload the IPA with a tool that signs embedded frameworks.")
     except (OSError, ValueError, RuntimeError, KeyError, TypeError,
             plistlib.InvalidFileException, struct.error, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         parser.exit(1, f"ERROR: {error}\n")

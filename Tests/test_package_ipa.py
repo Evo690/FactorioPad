@@ -200,6 +200,14 @@ def main():
         with mock_patch('subprocess.run', side_effect=extract), contextlib.redirect_stdout(io.StringIO()):
             package_dmg(template, dmg, root / "another-version-dmg", Path('7zip'))
         assert (root / "another-version-dmg/FactorioPad.ipa").is_file()
+        assert (root / "another-version-dmg/FactorioData").is_dir()
+        with mock_patch('subprocess.run', side_effect=extract), contextlib.redirect_stdout(io.StringIO()):
+            package_dmg(template, dmg, root / "ipa-only-dmg", Path('7zip'), include_data=False)
+        assert (root / "ipa-only-dmg/FactorioPad.ipa").is_file()
+        assert not (root / "ipa-only-dmg/FactorioData").exists()
+        package(template, app, root / "ipa-only-app", include_data=False)
+        assert (root / "ipa-only-app/FactorioPad.ipa").is_file()
+        assert not (root / "ipa-only-app/FactorioData").exists()
         invalid_template = root / "invalid-template.ipa"
         with zipfile.ZipFile(template) as source, zipfile.ZipFile(invalid_template, "w") as target:
             for entry in source.infolist():

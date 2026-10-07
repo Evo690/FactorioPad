@@ -28,13 +28,13 @@ def result_folder(parent):
     return output
 
 
-def prepare_game(dmg, parent, resources, progress):
+def prepare_game(dmg, parent, resources, progress, include_data=True):
     template = resources / "FactorioPad-template.ipa"
     extractor = resources / "7zip" / ("7z.exe" if sys.platform == "win32" else "7zz")
     if not template.is_file() or not extractor.is_file():
         raise ValueError("The companion files are missing. Extract the entire release archive, then open the app again.")
     output = result_folder(parent)
-    package_dmg(template, dmg, output, extractor, progress=progress)
+    package_dmg(template, dmg, output, extractor, progress=progress, include_data=include_data)
     return output
 
 
@@ -78,6 +78,8 @@ class Companion:
         buttons.grid(row=6, column=0, columnspan=2, sticky="w", pady=(16, 8))
         self.prepare_button = ttk.Button(buttons, text="Prepare app", command=self.prepare)
         self.prepare_button.pack(side="left")
+        self.prepare_ipa_button = ttk.Button(buttons, text="Prepare IPA only", command=self.prepare_ipa_only)
+        self.prepare_ipa_button.pack(side="left", padx=(8, 0))
         self.open_button = ttk.Button(buttons, text="Open result", state="disabled", command=self.open_result)
         self.open_button.pack(side="left", padx=12)
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
@@ -99,26 +101,30 @@ class Companion:
         if selected:
             self.destination.set(selected)
 
-    def prepare(self):
+    def prepare(self, include_data=True):
         dmg = Path(self.image.get())
         if not self.image.get() or not dmg.is_file() or dmg.suffix.lower() != ".dmg":
             messagebox.showerror("Select a game download", "Select your Mac Factorio DMG first.", parent=self.window)
             return
         self.busy = True
         self.output = None
-        for button in (self.prepare_button, self.choose_image, self.choose_folder, self.open_button):
+        for button in (self.prepare_button, self.prepare_ipa_button, self.choose_image, self.choose_folder, self.open_button):
             button.configure(state="disabled")
         self.progress.start()
-        self.status.set("Preparing your app. Keep this window open until preparation finishes.")
+        status_msg = "Preparing your app. Keep this window open until preparation finishes." if include_data else "Preparing your IPA. Keep this window open until preparation finishes."
+        self.status.set(status_msg)
         # Tk calls stay on the main thread. The worker only posts queue messages.
         parent = Path(self.destination.get())
         def worker():
             try:
-                output = prepare_game(dmg, parent, resource_root(), lambda text: self.events.put(("progress", text)))
+                output = prepare_game(dmg, parent, resource_root(), lambda text: self.events.put(("progress", text)), include_data=include_data)
                 self.events.put(("done", output))
             except Exception as error:
                 self.events.put(("error", str(error)))
         threading.Thread(target=worker, daemon=True).start()
+
+    def prepare_ipa_only(self):
+        self.prepare(include_data=False)
 
     def poll(self):
         while True:
@@ -131,13 +137,16 @@ class Companion:
                 continue
             self.busy = False
             self.progress.stop()
-            for button in (self.prepare_button, self.choose_image, self.choose_folder):
+            for button in (self.prepare_button, self.prepare_ipa_button, self.choose_image, self.choose_folder):
                 button.configure(state="normal")
             if kind == "done":
                 self.output = value
                 self.open_button.configure(state="normal")
                 self.status.set("Your app is ready. Click Open result to see the files.")
-                self.instructions.set("Install FactorioPad.ipa with your sideloading tool.\nTransfer FactorioData to Files on your iPhone or iPad.\nOpen FactorioPad and import that folder. After import finishes, you can remove the original folder.")
+                if (value / "FactorioData").exists():
+                    self.instructions.set("Install FactorioPad.ipa with your sideloading tool.\nTransfer FactorioData to Files on your iPhone or iPad.\nOpen FactorioPad and import that folder. After import finishes, you can remove the original folder.")
+                else:
+                    self.instructions.set("Install FactorioPad.ipa with your sideloading tool.\nFactorioData was skipped; existing game data on your device will be used.")
             else:
                 self.status.set("Preparation failed. Select another DMG or destination and try again.")
                 messagebox.showerror("Cannot prepare FactorioPad", value, parent=self.window)
