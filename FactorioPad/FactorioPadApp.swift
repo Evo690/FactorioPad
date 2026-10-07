@@ -51,6 +51,7 @@ struct FactorioLaunchView: View {
     private enum Stage { case gameSetup, openingGame, setup, syncing, playing, stopped }
 
     @AppStorage("FactorioGraphicsQuality") private var graphicsQuality = "normal"
+    @State private var hasLoadedGraphicsQuality = false
     @State private var stage = Stage.openingGame
     @State private var importProgress = 0.0
     @State private var showsControls = false
@@ -180,12 +181,17 @@ struct FactorioLaunchView: View {
         VStack(spacing: 6) {
             Text("Graphics Quality").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
             Picker("Graphics Quality", selection: $graphicsQuality) {
-                Text("Low").tag("low" as String)
-                Text("Normal").tag("normal" as String)
-                Text("High").tag("high" as String)
+                Text("Low").tag("low")
+                Text("Normal").tag("normal")
+                Text("High").tag("high")
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 280)
+            .onChange(of: graphicsQuality) { _, newValue in
+                // Explicitly persist and log to ensure ObjC loader sees the same value
+                UserDefaults.standard.set(newValue, forKey: "FactorioGraphicsQuality")
+                FactorioLoader.logMessage("Graphics quality selected: \(newValue)")
+            }
             if graphicsQuality == "high" {
                 Text("High quality requires 8 GB+ RAM and may crash on iPhones.")
                     .font(.caption2)
@@ -202,6 +208,24 @@ struct FactorioLaunchView: View {
             }
         }
         .padding(.vertical, 4)
+        .task {
+            // Ensure the displayed default is persisted so FactorioLoader (ObjC) sees the same value.
+            // Previously @AppStorage defaulted to "normal" in Swift but ObjC defaulted to "high" on BC GPUs,
+            // so the UI and the effective config diverged until the user tapped the picker.
+            if !hasLoadedGraphicsQuality {
+                hasLoadedGraphicsQuality = true
+                if let stored = UserDefaults.standard.string(forKey: "FactorioGraphicsQuality") {
+                    if !["low", "normal", "high"].contains(stored) {
+                        graphicsQuality = "normal"
+                        FactorioLoader.logMessage("Clamped corrupted graphics quality '\(stored)' to normal")
+                    }
+                } else {
+                    // Persist the initial Swift default so both sides agree (normal is safe for all devices)
+                    UserDefaults.standard.set(graphicsQuality, forKey: "FactorioGraphicsQuality")
+                    FactorioLoader.logMessage("Initialized graphics quality to \(graphicsQuality)")
+                }
+            }
+        }
     }
 
     private func importGame(from folder: URL?) async {
