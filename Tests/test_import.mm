@@ -27,8 +27,14 @@ int main(void)
         NSFileManager *files = NSFileManager.defaultManager;
         NSString *temporary = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSString *root = [temporary stringByAppendingPathComponent:@"Documents"];
-        NSCAssert([FactorioWritableRoot() isEqualToString:[files URLsForDirectory:NSDocumentDirectory
+        NSString *cachedWritableRoot = FactorioWritableRoot();
+        NSCAssert([cachedWritableRoot isEqualToString:[files URLsForDirectory:NSDocumentDirectory
             inDomains:NSUserDomainMask].firstObject.path], @"the app must store files directly in Documents");
+        NSString *originalWorkingDirectory = files.currentDirectoryPath;
+        NSCAssert(chdir(NSTemporaryDirectory().fileSystemRepresentation) == 0, @"change working directory for root-cache test");
+        NSCAssert([FactorioWritableRoot() isEqualToString:cachedWritableRoot],
+            @"all callers must keep the same Documents root when the process working directory changes");
+        NSCAssert(chdir(originalWorkingDirectory.fileSystemRepresentation) == 0, @"restore working directory");
         NSString *oldRoot = [temporary stringByAppendingPathComponent:@"Library/Application Support/FactorioPad"];
         MakeGameData(FactorioImportedDataPath(oldRoot));
         NSString *oldSave = [oldRoot stringByAppendingPathComponent:@"saves/old.zip"];

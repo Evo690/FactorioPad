@@ -43,6 +43,23 @@ int main(void)
         NSString *customGraphics = @"[graphics]\nhigh-quality-animations=false\ntexture-compression-level=none\n";
         NSCAssert([FactorioUpdateConfigPaths(customGraphics, @"/new/read", @"/new/write") hasPrefix:customGraphics],
             @"saved graphics preferences must not be replaced by new defaults");
+        NSString *duplicateGraphics = @"[graphics]\n graphics-quality = high \ncustom=keep\n[graphics]\n[interface]\ncustom-ui-scale=1.25\n";
+        NSCAssert(!FactorioConfigSectionContainsBinding(duplicateGraphics, @"[graphics]", @"graphics-quality=low"),
+            @"verification must reject a stale value or a missing value in a duplicate graphics section");
+        NSString *graphicsDump = FactorioConfigSectionDump(duplicateGraphics, @"[graphics]");
+        NSCAssert([graphicsDump containsString:@"graphics-quality = high"] &&
+            ![graphicsDump containsString:@"[interface]"],
+            @"diagnostic dumps must include every graphics section and no unrelated section");
+        NSString *repairedGraphics = FactorioSetConfigSectionBinding(duplicateGraphics,
+            @"[graphics]", @"graphics-quality=low");
+        NSCAssert(FactorioConfigSectionContainsBinding(repairedGraphics, @"[graphics]", @"graphics-quality=low") &&
+            ![repairedGraphics containsString:@"graphics-quality = high"] &&
+            [repairedGraphics containsString:@"custom=keep"],
+            @"fallback must normalize all duplicate graphics sections and preserve unrelated settings");
+        NSString *newGraphics = FactorioSetConfigSectionBinding(@"[audio]\nvolume=1\n",
+            @"[graphics]", @"graphics-quality=low");
+        NSCAssert(FactorioConfigSectionContainsBinding(newGraphics, @"[graphics]", @"graphics-quality=low"),
+            @"fallback must create a missing graphics section");
         for (NSString *graphics in @[
             @"[graphics]\ntexture-compression-level=high-quality\n[interface]\ncustom-ui-scale=1.25\n",
             @"[graphics]\n texture-compression-level = high-quality \nhigh-quality-animations=false\n[interface]\ncustom-ui-scale=1.25\n",

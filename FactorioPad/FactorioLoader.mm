@@ -154,8 +154,14 @@ static void FactorioConfigureEnvironment(void)
 
 static NSString *FactorioWritableRoot(void)
 {
-    return [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
-        inDomains:NSUserDomainMask].firstObject.path;
+    static NSString *cached = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSURL *url = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+            inDomains:NSUserDomainMask].firstObject;
+        cached = url.path.copy;
+    });
+    return cached;
 }
 
 static BOOL FactorioCopyStartupLog(NSURL *source, NSURL *folder, NSError **error)
@@ -192,6 +198,8 @@ __attribute__((constructor)) static void FactorioBeginStartupLogging(void)
             return;
         }
         FactorioStartupLog = [NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"FactorioPad.log"]];
+        // Log only after the stderr pipe is installed so this diagnostic is captured in FactorioPad.log.
+        FactorioLog([NSString stringWithFormat:@"Writable root: %@", root]);
         struct utsname device = {};
         uname(&device);
         FactorioLog([NSString stringWithFormat:@"Startup %@; FactorioPad %@ (%@)", NSDate.date,
@@ -367,6 +375,126 @@ static NSString *FactorioApplyConfigSection(
         [result addObject:section];
         [result addObjectsFromArray:bindings];
     }
+    return [result componentsJoinedByString:@"\n"];
+}
+
+static BOOL FactorioIsConfigSectionHeader(NSString *line)
+{
+    NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    return trimmed.length >= 3 && [trimmed hasPrefix:@"["] && [trimmed hasSuffix:@"]"];
+}
+
+static NSString *FactorioConfigSectionDump(NSString *config, NSString *section)
+{
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    BOOL inSection = NO;
+    BOOL foundSection = NO;
+    for (NSString *line in [config componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (FactorioIsConfigSectionHeader(line)) {
+            inSection = [trimmed caseInsensitiveCompare:section] == NSOrderedSame;
+            if (inSection) {
+                foundSection = YES;
+                [result addObject:line];
+            }
+        } else if (inSection) {
+            [result addObject:line];
+        }
+    }
+    return foundSection ? [result componentsJoinedByString:@"\n"] :
+        [NSString stringWithFormat:@"<%@ section missing>", section];
+}
+
+static BOOL FactorioConfigSectionContainsBinding(NSString *config, NSString *section, NSString *binding)
+{
+    NSRange bindingEquals = [binding rangeOfString:@"="];
+    if (bindingEquals.location == NSNotFound) { return NO; }
+    NSString *expectedKey = [[binding substringToIndex:bindingEquals.location]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSString *expectedValue = [[binding substringFromIndex:bindingEquals.location + 1]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+
+    BOOL inSection = NO;
+    BOOL foundSection = NO;
+    BOOL currentSectionHasExpectedValue = NO;
+    BOOL allSectionsMatch = YES;
+    for (NSString *line in [config componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (FactorioIsConfigSectionHeader(line)) {
+            if (inSection && !currentSectionHasExpectedValue) { allSectionsMatch = NO; }
+            inSection = [trimmed caseInsensitiveCompare:section] == NSOrderedSame;
+            if (inSection) {
+                foundSection = YES;
+                currentSectionHasExpectedValue = NO;
+            }
+            continue;
+        }
+        if (!inSection) { continue; }
+        NSRange equals = [trimmed rangeOfString:@"="];
+        if (equals.location == NSNotFound) { continue; }
+        NSString *key = [[trimmed substringToIndex:equals.location]
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if ([key caseInsensitiveCompare:expectedKey] != NSOrderedSame) { continue; }
+        NSString *value = [[trimmed substringFromIndex:equals.location + 1]
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if ([value isEqualToString:expectedValue]) {
+            currentSectionHasExpectedValue = YES;
+        } else {
+            allSectionsMatch = NO;
+        }
+    }
+    if (inSection && !currentSectionHasExpectedValue) { allSectionsMatch = NO; }
+    return foundSection && allSectionsMatch;
+}
+
+// Normalize the requested key in every matching section. This is used as a
+// last-resort repair when the ordinary section updater cannot verify its output.
+static NSString *FactorioSetConfigSectionBinding(NSString *config, NSString *section, NSString *binding)
+{
+    NSRange bindingEquals = [binding rangeOfString:@"="];
+    if (bindingEquals.location == NSNotFound) { return config; }
+    NSString *expectedKey = [[binding substringToIndex:bindingEquals.location]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSArray<NSString *> *lines = [config componentsSeparatedByString:@"\n"];
+    NSMutableArray<NSString *> *result = [NSMutableArray arrayWithCapacity:lines.count + 2];
+    __block BOOL inSection = NO;
+    __block BOOL settingSeenInSection = NO;
+    BOOL foundSection = NO;
+    void (^appendMissingBinding)(void) = ^{
+        if (inSection && !settingSeenInSection) {
+            [result addObject:binding];
+            settingSeenInSection = YES;
+        }
+    };
+
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (FactorioIsConfigSectionHeader(line)) {
+            appendMissingBinding();
+            inSection = [trimmed caseInsensitiveCompare:section] == NSOrderedSame;
+            if (inSection) {
+                foundSection = YES;
+                settingSeenInSection = NO;
+            }
+            [result addObject:line];
+            continue;
+        }
+        if (inSection) {
+            NSRange equals = [trimmed rangeOfString:@"="];
+            if (equals.location != NSNotFound) {
+                NSString *key = [[trimmed substringToIndex:equals.location]
+                    stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+                if ([key caseInsensitiveCompare:expectedKey] == NSOrderedSame) {
+                    if (!settingSeenInSection) { [result addObject:binding]; }
+                    settingSeenInSection = YES;
+                    continue;
+                }
+            }
+        }
+        [result addObject:line];
+    }
+    appendMissingBinding();
+    if (!foundSection) { [result addObjectsFromArray:@[section, binding]]; }
     return [result componentsJoinedByString:@"\n"];
 }
 
@@ -582,6 +710,13 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
 
     NSFileManager *fileManager = NSFileManager.defaultManager;
     NSString *root = FactorioWritableRoot();
+    if (!root.length) {
+        FactorioReportError(@"Factorio cannot locate its writable data folder.");
+        return nil;
+    }
+    NSString *configPath = [root stringByAppendingPathComponent:@"config/config.ini"];
+    FactorioLog([NSString stringWithFormat:@"TRACE: Enter FactorioPrepareWritableData readDataPath=%@ root=%@ configPath=%@",
+        readDataPath, root, configPath]);
     NSArray<NSString *> *directories = @[
         root,
         [root stringByAppendingPathComponent:@"config"],
@@ -603,7 +738,6 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         }
     }
 
-    NSString *configPath = [root stringByAppendingPathComponent:@"config/config.ini"];
     NSError *error = nil;
     NSString *config = [NSString stringWithContentsOfFile:configPath
                                                   encoding:NSUTF8StringEncoding
@@ -628,13 +762,16 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
     FactorioLog(@"Sprite mask textures: uncompressed R8/RG8");
     FactorioLog([NSString stringWithFormat:@"GPU: %@; BC texture compression: %@",
         device.name ?: @"unavailable", compressedTextures ? @"supported" : @"unsupported"]);
-    NSString *userQuality = [[NSUserDefaults standardUserDefaults] stringForKey:@"FactorioGraphicsQuality"];
+    NSString *storedQuality = [[NSUserDefaults standardUserDefaults] stringForKey:@"FactorioGraphicsQuality"];
+    NSString *userQuality = storedQuality;
     if (!userQuality || userQuality.length == 0) {
         userQuality = @"normal";
     } else if (![@[@"low", @"normal", @"high"] containsObject:userQuality]) {
         FactorioLog([NSString stringWithFormat:@"Unknown graphics quality '%@', falling back to normal", userQuality]);
         userQuality = @"normal";
     }
+    FactorioLog([NSString stringWithFormat:@"TRACE: UserDefaults FactorioGraphicsQuality=%@; effective quality=%@",
+        storedQuality ?: @"<missing>", userQuality]);
 
     NSMutableArray<NSString *> *graphicsSettings = [NSMutableArray array];
     if (!compressedTextures) {
@@ -664,9 +801,34 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         ]];
     }
 
+    NSString *originalGraphics = [config copy];
+    FactorioLog([NSString stringWithFormat:@"TRACE: Original [graphics] before apply:\n%@",
+        FactorioConfigSectionDump(originalGraphics, @"[graphics]")]);
     config = FactorioApplyConfigSection(config, @"[graphics]", graphicsSettings, YES, YES);
-    FactorioLog([NSString stringWithFormat:@"Applied graphics quality '%@' (compression: %@)",
-        userQuality, compressedTextures ? @"high-quality" : @"none"]);
+    NSString *qualityBinding = [@"graphics-quality=" stringByAppendingString:userQuality];
+    FactorioLog([NSString stringWithFormat:@"Applied graphics quality '%@' to %@", userQuality, configPath]);
+    FactorioLog([NSString stringWithFormat:@"Graphics settings: %@; texture compression: %@",
+        [graphicsSettings componentsJoinedByString:@", "], compressedTextures ? @"high-quality" : @"none"]);
+
+    BOOL verifiedQuality = FactorioConfigSectionContainsBinding(config, @"[graphics]", qualityBinding);
+    if (!verifiedQuality) {
+        FactorioLog([NSString stringWithFormat:@"WARNING: config after apply does not contain %@; actual [graphics] section:\n%@",
+            qualityBinding, FactorioConfigSectionDump(config, @"[graphics]")]);
+        config = FactorioSetConfigSectionBinding(config, @"[graphics]", qualityBinding);
+        verifiedQuality = FactorioConfigSectionContainsBinding(config, @"[graphics]", qualityBinding);
+        if (verifiedQuality) {
+            FactorioLog([NSString stringWithFormat:@"TRACE: Fallback succeeded for %@; graphicsSettings=%@",
+                qualityBinding, [graphicsSettings componentsJoinedByString:@", "]]);
+        } else {
+            FactorioLog([NSString stringWithFormat:@"WARNING: fallback could not verify %@; actual [graphics] section:\n%@",
+                qualityBinding, FactorioConfigSectionDump(config, @"[graphics]")]);
+        }
+    }
+    if (verifiedQuality) {
+        FactorioLog([NSString stringWithFormat:@"Verified config contains %@", qualityBinding]);
+    }
+    FactorioLog([NSString stringWithFormat:@"TRACE: Final [graphics] dump:\n%@",
+        FactorioConfigSectionDump(config, @"[graphics]")]);
 
     if (![config writeToFile:configPath
                   atomically:YES
@@ -674,6 +836,22 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
                        error:&error]) {
         FactorioReportError(@"Factorio cannot save its configuration.");
         return nil;
+    }
+    FactorioLog([NSString stringWithFormat:@"TRACE: Config write to %@ succeeded (%lu UTF-8 bytes)",
+        configPath, (unsigned long)[config lengthOfBytesUsingEncoding:NSUTF8StringEncoding]]);
+
+    NSError *readbackError = nil;
+    NSString *writtenConfig = [NSString stringWithContentsOfFile:configPath
+                                                        encoding:NSUTF8StringEncoding
+                                                           error:&readbackError];
+    if (!writtenConfig) {
+        FactorioLog([NSString stringWithFormat:@"WARNING: Could not read config back from %@: %@",
+            configPath, readbackError.localizedDescription]);
+    } else if (FactorioConfigSectionContainsBinding(writtenConfig, @"[graphics]", qualityBinding)) {
+        FactorioLog([NSString stringWithFormat:@"TRACE: Disk read-back verified %@ in %@", qualityBinding, configPath]);
+    } else {
+        FactorioLog([NSString stringWithFormat:@"WARNING: config on disk does not contain %@; actual [graphics] section:\n%@",
+            qualityBinding, FactorioConfigSectionDump(writtenConfig, @"[graphics]")]);
     }
 
     return configPath;
