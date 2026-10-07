@@ -599,54 +599,78 @@ static void FPSwizzleMetalDevice(void)
     });
 }
 
-static void FPSanitizeConfigIfNeeded(void)
+static void FPSanitizeConfigIfNeeded(NSString *configPath)
 {
-    NSArray *paths = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask];
-    if (!paths.count) return;
-    NSURL *docsURL = paths.firstObject;
-    NSString *configPath = [docsURL.path stringByAppendingPathComponent:@"config/config.ini"];
+    // Use the exact config path prepared by FactorioLoader; do not independently
+    // re-resolve Documents and risk sanitizing a different file.
+    if (!configPath.length) {
+        NSLog(@"[FactorioCompat] No canonical config path; skipping config sanitization.");
+        return;
+    }
+
     NSFileManager *fm = NSFileManager.defaultManager;
-    if (![fm fileExistsAtPath:configPath]) return;
+    if (![fm fileExistsAtPath:configPath]) {
+        NSLog(@"[FactorioCompat] Canonical config does not exist: %@", configPath);
+        return;
+    }
+    NSLog(@"[FactorioCompat] Checking canonical config: %@", configPath);
 
     NSError *err = nil;
     NSString *content = [NSString stringWithContentsOfFile:configPath encoding:NSUTF8StringEncoding error:&err];
-    if (!content) return;
+    if (!content) {
+        NSLog(@"[FactorioCompat] Cannot read canonical config %@: %@", configPath, err.localizedDescription);
+        return;
+    }
 
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     BOOL bcSupported = device && device.supportsBCTextureCompression;
-
-    if (!bcSupported) {
-        BOOL modified = NO;
-        if ([content containsString:@"graphics-quality=high"]) {
-            content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=high"
-                                                         withString:@"graphics-quality=normal"];
-            modified = YES;
-        }
-        if ([content containsString:@"high-quality-animations=true"]) {
-            content = [content stringByReplacingOccurrencesOfString:@"high-quality-animations=true"
-                                                         withString:@"high-quality-animations=false"];
-            modified = YES;
-        }
-        if ([content containsString:@"max-texture-size=0"]) {
-            content = [content stringByReplacingOccurrencesOfString:@"max-texture-size=0"
-                                                         withString:@"max-texture-size=4096"];
-            modified = YES;
-        }
-        if ([content containsString:@"video-memory-usage=all"]) {
-            content = [content stringByReplacingOccurrencesOfString:@"video-memory-usage=all"
-                                                         withString:@"video-memory-usage=medium"];
-            modified = YES;
-        }
-        if ([content containsString:@"texture-compression-level=high-quality"]) {
-            content = [content stringByReplacingOccurrencesOfString:@"texture-compression-level=high-quality"
-                                                         withString:@"texture-compression-level=none"];
-            modified = YES;
-        }
-        if (modified) {
-            [content writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-            NSLog(@"[FactorioCompat] Sanitized config.ini for mobile GPU to prevent texture atlas crash.");
-        }
+    if (bcSupported) {
+        NSLog(@"[FactorioCompat] Config needs no mobile-GPU sanitization (BC compression supported).");
+        return;
     }
+
+    BOOL modified = NO;
+    if ([content containsString:@"graphics-quality=high"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"graphics-quality=high"
+                                                     withString:@"graphics-quality=normal"];
+        modified = YES;
+    }
+    if ([content containsString:@"high-quality-animations=true"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"high-quality-animations=true"
+                                                     withString:@"high-quality-animations=false"];
+        modified = YES;
+    }
+    if ([content containsString:@"max-texture-size=0"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"max-texture-size=0"
+                                                     withString:@"max-texture-size=4096"];
+        modified = YES;
+    }
+    if ([content containsString:@"video-memory-usage=all"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"video-memory-usage=all"
+                                                     withString:@"video-memory-usage=medium"];
+        modified = YES;
+    }
+    if ([content containsString:@"texture-compression-level=high-quality"]) {
+        content = [content stringByReplacingOccurrencesOfString:@"texture-compression-level=high-quality"
+                                                     withString:@"texture-compression-level=none"];
+        modified = YES;
+    }
+    if (modified) {
+        NSError *writeError = nil;
+        if (![content writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:&writeError]) {
+            NSLog(@"[FactorioCompat] Cannot write sanitized config %@: %@", configPath, writeError.localizedDescription);
+        } else {
+            NSLog(@"[FactorioCompat] Sanitized canonical config for mobile GPU: %@", configPath);
+        }
+    } else {
+        NSLog(@"[FactorioCompat] Canonical config already uses safe mobile-GPU settings.");
+    }
+}
+
+EXPORT
+void FactorioCompatSanitizeConfig(NSString *configPath)
+{
+    FPSanitizeConfigIfNeeded(configPath);
 }
 
 @interface FactorioMetalShims : NSObject
@@ -657,7 +681,6 @@ static void FPSanitizeConfigIfNeeded(void)
 + (void)load
 {
     FPSwizzleMetalDevice();
-    FPSanitizeConfigIfNeeded();
 }
 
 @end

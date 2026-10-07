@@ -992,6 +992,29 @@ static void *FactorioOpenFramework(NSString *name, int flags)
     if (!compat) {
         return;
     }
+    typedef void (*FactorioCompatSanitizeConfigFunction)(NSString *);
+    dlerror();
+    FactorioCompatSanitizeConfigFunction sanitizeConfig =
+        (FactorioCompatSanitizeConfigFunction)dlsym(compat, "FactorioCompatSanitizeConfig");
+    if (!sanitizeConfig) {
+        const char *symbolError = dlerror();
+        FactorioLog([NSString stringWithFormat:@"WARNING: FactorioCompat config sanitizer is unavailable: %s",
+            symbolError ? symbolError : "unknown error"]);
+    } else {
+        FactorioLog([NSString stringWithFormat:@"TRACE: Sanitizing prepared config with FactorioCompat: %@", configPath]);
+        sanitizeConfig(configPath);
+    }
+    NSError *compatConfigError = nil;
+    NSString *compatConfig = [NSString stringWithContentsOfFile:configPath
+                                                       encoding:NSUTF8StringEncoding
+                                                          error:&compatConfigError];
+    if (compatConfig) {
+        FactorioLog([NSString stringWithFormat:@"TRACE: [graphics] after FactorioCompat:\n%@",
+            FactorioConfigSectionDump(compatConfig, @"[graphics]")]);
+    } else {
+        FactorioLog([NSString stringWithFormat:@"WARNING: Cannot verify config after FactorioCompat: %@",
+            compatConfigError.localizedDescription]);
+    }
 
     FactorioLog(@"Loading FactorioGuest");
     void *guest = FactorioOpenFramework(@"FactorioGuest", RTLD_NOW | RTLD_LOCAL);
@@ -1041,6 +1064,8 @@ static void *FactorioOpenFramework(NSString *name, int flags)
                 FactorioReportError(@"Factorio cannot open its game folder.");
                 return;
             }
+            FactorioLog([NSString stringWithFormat:@"TRACE: Calling Factorio main with --config %@; working directory %@",
+                configPath, readDataPath]);
 
             int argumentCount = (int)arguments.count;
             char **argumentValues = (char **)calloc((size_t)argumentCount + 1, sizeof(char *));

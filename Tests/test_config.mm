@@ -43,6 +43,15 @@ int main(void)
         NSString *customGraphics = @"[graphics]\nhigh-quality-animations=false\ntexture-compression-level=none\n";
         NSCAssert([FactorioUpdateConfigPaths(customGraphics, @"/new/read", @"/new/write") hasPrefix:customGraphics],
             @"saved graphics preferences must not be replaced by new defaults");
+        NSString *lowPreset = FactorioApplyConfigSection(@"[graphics]\ngraphics-quality=high\nhigh-quality-animations=true\n",
+            @"[graphics]", @[@"graphics-quality=low", @"high-quality-animations=false",
+                @"max-texture-size=4096", @"video-memory-usage=low"], YES, YES);
+        NSCAssert(FactorioConfigSectionContainsBinding(lowPreset, @"[graphics]", @"graphics-quality=low") &&
+            ![lowPreset containsString:@"graphics-quality=high"] &&
+            [lowPreset containsString:@"high-quality-animations=false"] &&
+            [lowPreset containsString:@"max-texture-size=4096"] &&
+            [lowPreset containsString:@"video-memory-usage=low"],
+            @"selecting low must replace stale graphics settings with the full low preset");
         NSString *duplicateGraphics = @"[graphics]\n graphics-quality = high \ncustom=keep\n[graphics]\n[interface]\ncustom-ui-scale=1.25\n";
         NSCAssert(!FactorioConfigSectionContainsBinding(duplicateGraphics, @"[graphics]", @"graphics-quality=low"),
             @"verification must reject a stale value or a missing value in a duplicate graphics section");
