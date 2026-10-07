@@ -33,13 +33,19 @@ jobs:
           mkdir -p Vendor/FactorioGuest.framework
           touch Vendor/FactorioGuest.framework/FactorioGuest
           python3 -c "
-          import zipfile, pathlib
-          with zipfile.ZipFile('build-input/FactorioPad-template.ipa', 'r') as z:
-              for name in z.namelist():
-                  if 'AppIcon' in name and name.endswith('.png'):
-                      pathlib.Path('FactorioPad/Assets.xcassets/AppIcon.appiconset/icon.png').write_bytes(z.read(name))
-                      print(f'Extracted icon from {name}')
-                      break
+          import zlib, struct, pathlib
+          icon_path = pathlib.Path('FactorioPad/Assets.xcassets/AppIcon.appiconset/icon.png')
+          if not icon_path.is_file():
+              w, h = 1024, 1024
+              raw = (b'\x00' + b'\xe5\x82\x26\xff' * w) * h
+              comp = zlib.compress(raw)
+              def chunk(tag, data):
+                  crc = zlib.crc32(tag + data) & 0xffffffff
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', crc)
+              png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) + chunk(b'IDAT', comp) + chunk(b'IEND', b'')
+              icon_path.parent.mkdir(parents=True, exist_ok=True)
+              icon_path.write_bytes(png)
+              print('Generated 1024x1024 AppIcon icon.png')
           "
       - name: Build FactorioPad and FactorioCompat
         run: |
