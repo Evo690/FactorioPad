@@ -118,31 +118,7 @@ struct FactorioLaunchView: View {
                         }
                     }
                     if stage != .playing {
-                        VStack(spacing: 6) {
-                            Text("Graphics Quality").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                            Picker("Graphics Quality", selection: $graphicsQuality) {
-                                Text("Low").tag("low")
-                                Text("Normal").tag("normal")
-                                Text("High").tag("high")
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(maxWidth: 280)
-                            if graphicsQuality == "high" {
-                                Text("High quality requires 8 GB+ RAM and may crash on iPhones.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                                    .multilineTextAlignment(.center)
-                            } else if graphicsQuality == "normal" {
-                                Text("Recommended for iPhone play and Space Age.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("Fastest loading and lowest memory usage.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 4)
+                        graphicsQualityPicker
                     }
                     if let log = FactorioLoader.startupLogURL() {
                         ShareLink("Share log", item: log)
@@ -197,6 +173,35 @@ struct FactorioLaunchView: View {
         .alert("Factorio", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK") { message = nil }
         } message: { Text(message ?? "") }
+    }
+
+    @ViewBuilder
+    private var graphicsQualityPicker: some View {
+        VStack(spacing: 6) {
+            Text("Graphics Quality").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+            Picker("Graphics Quality", selection: $graphicsQuality) {
+                Text("Low").tag("low" as String)
+                Text("Normal").tag("normal" as String)
+                Text("High").tag("high" as String)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 280)
+            if graphicsQuality == "high" {
+                Text("High quality requires 8 GB+ RAM and may crash on iPhones.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            } else if graphicsQuality == "normal" {
+                Text("Recommended for iPhone play and Space Age.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Fastest loading and lowest memory usage.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func importGame(from folder: URL?) async {
